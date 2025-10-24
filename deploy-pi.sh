@@ -1,8 +1,13 @@
 #!/bin/bash
 
-# Pi-Chat Deployment Script for Raspberry Pi OS (Debian 13 Trixie)
+# Pi-Chat Deployment Script for Debian/Ubuntu/Raspberry Pi OS
 # Deploys Next.js chat application with MongoDB Atlas, Nginx, and Ngrok
-# Compatible with Raspberry Pi 3, 4, 5, and Zero 2 W
+# Compatible with:
+#   - Debian 12/13 (Bookworm/Trixie)
+#   - Ubuntu 22.04/24.04
+#   - Raspberry Pi OS (Debian 13 Trixie)
+#   - AWS EC2, DigitalOcean, etc.
+# Supports: x86_64, ARM64, ARMv7
 
 # Exit on error and print commands
 set -e
@@ -46,34 +51,47 @@ if [ "$(id -u)" -ne 0 ]; then
     error_exit "Please run as root or use sudo"
 fi
 
-log "🍓 Starting Pi-Chat deployment on Raspberry Pi OS (Debian 13 Trixie)"
+log "🚀 Starting Pi-Chat deployment"
 log "📦 This will install: Node.js, PM2, Nginx, Ngrok, and deploy the chat app"
 
-# Detect Raspberry Pi model
-if [ -f /proc/cpuinfo ]; then
-    PI_MODEL=$(grep "Model" /proc/cpuinfo | cut -d ":" -f 2 | xargs || echo "Unknown")
-    info "Detected: $PI_MODEL"
-    
-    # Check for minimum requirements
-    TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
-    info "Total RAM: ${TOTAL_MEM}MB"
-    
-    if [ "$TOTAL_MEM" -lt 1024 ]; then
-        warn "Low memory detected! Minimum 1GB RAM recommended for optimal performance"
-        warn "Consider enabling swap if not already enabled"
-    fi
+# Detect system information
+if [ -f /etc/os-release ]; then
+    OS_NAME=$(grep "^NAME=" /etc/os-release | cut -d '"' -f 2)
+    OS_VERSION=$(grep "VERSION=" /etc/os-release | cut -d '"' -f 2 || echo "Unknown")
+    info "OS: $OS_NAME $OS_VERSION"
 fi
 
-# Check Debian version
-if [ -f /etc/os-release ]; then
-    DEBIAN_VERSION=$(grep VERSION_ID /etc/os-release | cut -d '"' -f 2)
-    info "Debian version: $DEBIAN_VERSION"
+# Detect Raspberry Pi model (if applicable)
+if [ -f /proc/cpuinfo ] && grep -q "Raspberry Pi" /proc/cpuinfo; then
+    PI_MODEL=$(grep "Model" /proc/cpuinfo | cut -d ":" -f 2 | xargs || echo "Unknown")
+    info "🍓 Detected: $PI_MODEL"
+fi
+
+# Check system resources
+ARCH=$(uname -m)
+TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
+info "Architecture: $ARCH"
+info "Total RAM: ${TOTAL_MEM}MB"
+
+if [ "$TOTAL_MEM" -lt 1024 ]; then
+    warn "Low memory detected! Minimum 1GB RAM recommended for optimal performance"
+    warn "Consider enabling swap if not already enabled"
 fi
 
 # Get the actual non-root user
 ACTUAL_USER=$(logname 2>/dev/null || echo $SUDO_USER)
-if [ -z "$ACTUAL_USER" ]; then
-    ACTUAL_USER="pi"  # Default to pi for Raspberry Pi OS
+if [ -z "$ACTUAL_USER" ] || [ "$ACTUAL_USER" == "root" ]; then
+    # Try to detect common user accounts
+    if id "ubuntu" &>/dev/null; then
+        ACTUAL_USER="ubuntu"  # AWS EC2, DigitalOcean
+    elif id "admin" &>/dev/null; then
+        ACTUAL_USER="admin"  # Some cloud providers
+    elif id "pi" &>/dev/null; then
+        ACTUAL_USER="pi"  # Raspberry Pi OS
+    else
+        # Fall back to first non-system user
+        ACTUAL_USER=$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}' /etc/passwd)
+    fi
 fi
 USER_HOME="/home/$ACTUAL_USER"
 
@@ -139,15 +157,18 @@ CURRENT_USER=$(whoami)
 pm2 startup -u $ACTUAL_USER --hp $USER_HOME | tail -n 1 | bash || warn "Failed to set up PM2 startup (non-critical)"
 pm2 save || warn "Failed to save PM2 process list (non-critical)"
 
-# Install Ngrok for Raspberry Pi (ARM architecture)
-log "🔌 Installing Ngrok for Raspberry Pi..."
+# Install Ngrok (supports ARM and x86_64)
+log "🔌 Installing Ngrok..."
 if ! command -v ngrok &> /dev/null; then
     # Detect architecture
     ARCH=$(uname -m)
     log "Detected architecture: $ARCH"
     
     # Determine Ngrok download URL based on architecture
-    if [[ "$ARCH" == "aarch64" ]] || [[ "$ARCH" == "arm64" ]]; then
+    if [[ "$ARCH" == "x86_64" ]] || [[ "$ARCH" == "amd64" ]]; then
+        NGROK_URL="https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz"
+        log "Using x86_64/AMD64 version"
+    elif [[ "$ARCH" == "aarch64" ]] || [[ "$ARCH" == "arm64" ]]; then
         NGROK_URL="https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz"
         log "Using ARM64 version"
     elif [[ "$ARCH" == "armv7l" ]] || [[ "$ARCH" == "armhf" ]]; then
@@ -458,7 +479,7 @@ fi
 log "🎉 Deployment Complete!"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  🍓 Pi-Chat is now running on your Raspberry Pi!"
+echo "  ✅ Pi-Chat is now running on your server!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "🌍 PUBLIC URL:"
