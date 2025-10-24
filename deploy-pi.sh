@@ -95,15 +95,13 @@ apt-get install -y --no-install-recommends \
     git \
     build-essential \
     python3-pip \
-    sqlite3 \
-    libpcre3-dev \
+    libpcre2-dev \
     libssl-dev \
     zlib1g-dev \
     ca-certificates \
     curl \
     gnupg \
-    lsb-release \
-    software-properties-common || error_exit "Failed to install system dependencies"
+    lsb-release || error_exit "Failed to install system dependencies"
 
 # Install Node.js from NodeSource
 log "📥 Installing Node.js from NodeSource..."
