@@ -216,8 +216,8 @@ Documentation now accurately reflects:
 - Flow charts for complex features
 - Video tutorials/demos
 - API collection (Postman/Insomnia)
-- Docker setup guide
-- Kubernetes deployment guide
+- Production VPS deployment guide (beyond Raspberry Pi)
+- Auto-scaling with multiple PM2 instances
 
 ---
 
