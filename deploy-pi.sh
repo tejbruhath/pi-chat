@@ -133,19 +133,52 @@ log "📦 Installing Nginx..."
 # Update package lists
 apt-get update || error_exit "Failed to update package lists"
 
-# Install Nginx from Ubuntu's repository
-apt-get install -y --no-install-recommends \
-    nginx \
-    nginx-common || error_exit "Failed to install Nginx"
+# Install basic Nginx (without NJS module as it's not needed for Next.js)
+apt-get install -y nginx || error_exit "Failed to install Nginx"
+
+# Verify Nginx installation
+if ! command -v nginx &> /dev/null; then
+    error_exit "Nginx installation failed"
+fi
+
+log "✅ Nginx $(nginx -v 2>&1 | cut -d' ' -f3 | cut -d'/' -f2) installed successfully"
 
 # Configure UFW to allow Nginx traffic
 if command -v ufw &> /dev/null; then
     log "🔧 Configuring UFW for Nginx..."
-    ufw allow 'Nginx HTTP' || log "⚠️  Failed to configure UFW for HTTP"
-    ufw allow 'Nginx HTTPS' || log "⚠️  Failed to configure UFW for HTTPS"
+    ufw allow 'Nginx Full' || log "⚠️  Failed to configure UFW for Nginx"
     ufw --force enable || log "⚠️  Failed to enable UFW"
     ufw status || log "⚠️  Failed to check UFW status"
 fi
+
+# Configure Nginx as reverse proxy for Next.js
+log "🔧 Configuring Nginx as reverse proxy..."
+cat > /etc/nginx/sites-available/pi-chat << 'EOL'
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
+    }
+}
+EOL
+
+# Enable the site
+ln -sf /etc/nginx/sites-available/pi-chat /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default  # Remove default config
+
+# Test and restart Nginx
+nginx -t || error_exit "Nginx configuration test failed"
+systemctl restart nginx || error_exit "Failed to restart Nginx"
+log "✅ Nginx configured as reverse proxy for port 3000"
 
 # Verify Nginx installation
 if ! command -v nginx &> /dev/null; then
