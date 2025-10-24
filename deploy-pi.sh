@@ -82,20 +82,29 @@ log "🔧 Setting up PM2 startup..."
 pm2 startup | tail -n 1 | bash || log "Warning: Failed to set up PM2 startup"
 
 # Install Ngrok
-log "🔌 Installing Ngrok via official Debian package..."
+log "🔌 Installing Ngrok..."
 if ! command -v ngrok &> /dev/null; then
-    curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
-        | tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
-        || error_exit "Failed to add Ngrok GPG key"
+    # Download and install Ngrok directly
+    NGROK_VERSION="3.5.0"
+    NGROK_ARCH="linux-amd64"
+    NGROK_URL="https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v${NGROK_VERSION}-${NGROK_ARCH}.tgz"
     
-    echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" \
-        | tee /etc/apt/sources.list.d/ngrok.list \
-        || error_exit "Failed to add Ngrok repository"
+    # Download and extract Ngrok
+    curl -sSL $NGROK_URL -o /tmp/ngrok.tgz \
+        || error_exit "Failed to download Ngrok"
     
-    apt-get update || error_exit "Failed to update package lists for Ngrok"
-    apt-get install -y ngrok || error_exit "Failed to install Ngrok"
+    tar xzf /tmp/ngrok.tgz -C /usr/local/bin/ \
+        || error_exit "Failed to extract Ngrok"
     
-    log "✅ Ngrok installed successfully"
+    # Clean up
+    rm -f /tmp/ngrok.tgz
+    
+    # Verify installation
+    if ngrok --version &> /dev/null; then
+        log "✅ Ngrok $(ngrok --version) installed successfully"
+    else
+        error_exit "Failed to verify Ngrok installation"
+    fi
 else
     log "ℹ️  Ngrok is already installed"
 fi
@@ -110,28 +119,30 @@ else
     error_exit "Ngrok not found. Cannot configure auth token."
 fi
 
-# Install specific version of Nginx with NJS module
+# Install Nginx with NJS module from Ubuntu's repository
 log "📦 Installing Nginx with NJS module..."
-NGINX_VERSION="1.25.3-1~bookworm"
 
-# Add Nginx repository
+# Install prerequisites
 apt-get install -y --no-install-recommends \
     gnupg2 \
     lsb-release \
     ca-certificates \
     curl || error_exit "Failed to install prerequisites"
 
-# Add Nginx signing key
-curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor | tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null || error_exit "Failed to add Nginx GPG key"
-
-# Add Nginx repository
-echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/debian $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list || error_exit "Failed to add Nginx repository"
-
-# Install specific version of Nginx with NJS module
-apt-get update || error_exit "Failed to update package lists for Nginx"
+# Add Nginx official repository (using the mainline version)
 apt-get install -y --no-install-recommends \
-    nginx=${NGINX_VERSION} \
-    nginx-module-njs || error_exit "Failed to install Nginx with NJS module"
+    software-properties-common || error_exit "Failed to install software-properties-common"
+
+# Add Nginx repository (using the Ubuntu PPA for the latest stable version)
+add-apt-repository -y ppa:ondrej/nginx-mainline || error_exit "Failed to add Nginx PPA repository"
+
+# Update package lists
+apt-get update || error_exit "Failed to update package lists for Nginx"
+
+# Install Nginx with NJS module
+apt-get install -y --no-install-recommends \
+    nginx-extras \
+    nginx-common || error_exit "Failed to install Nginx with NJS module"
 
 # Verify Nginx installation
 NGINX_VERSION_INSTALLED=$(nginx -v 2>&1 | awk -F'/' '{print $2}')
