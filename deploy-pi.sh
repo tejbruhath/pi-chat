@@ -53,6 +53,7 @@ fi
 
 log "🚀 Starting Pi-Chat deployment"
 log "📦 This will install: Node.js, PM2, Nginx, Ngrok, and deploy the chat app"
+log "ℹ️  Using port 8080 for Nginx to avoid port 80 conflicts"
 
 # Detect system information
 if [ -f /etc/os-release ]; then
@@ -222,6 +223,18 @@ else
     error_exit "Ngrok not found. Cannot configure auth token."
 fi
 
+# Check if port 8080 is available
+log "🔍 Checking port 8080 availability..."
+if lsof -Pi :8080 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+    warn "Port 8080 is already in use!"
+    warn "Services using port 8080:"
+    lsof -Pi :8080 -sTCP:LISTEN || true
+    warn "Pi-Chat will use port 8080. You may need to stop the conflicting service."
+    warn "To stop a service: sudo systemctl stop <service-name>"
+else
+    log "✅ Port 8080 is available"
+fi
+
 # Install Nginx
 log "📦 Installing Nginx..."
 
@@ -238,10 +251,10 @@ fi
 
 log "✅ Nginx $(nginx -v 2>&1 | cut -d' ' -f3 | cut -d'/' -f2) installed successfully"
 
-# Configure UFW to allow Nginx traffic
+# Configure UFW to allow Nginx traffic on port 8080
 if command -v ufw &> /dev/null; then
-    log "🔧 Configuring UFW for Nginx..."
-    ufw allow 'Nginx Full' || log "⚠️  Failed to configure UFW for Nginx"
+    log "🔧 Configuring UFW for Nginx on port 8080..."
+    ufw allow 8080/tcp || log "⚠️  Failed to configure UFW for port 8080"
     ufw --force enable || log "⚠️  Failed to enable UFW"
     ufw status || log "⚠️  Failed to check UFW status"
 fi
@@ -259,8 +272,8 @@ map $http_upgrade $connection_upgrade {
 }
 
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
+    listen 8080 default_server;
+    listen [::]:8080 default_server;
     server_name _;
 
     # Security headers
@@ -392,7 +405,7 @@ sleep 2
 
 # Start Ngrok tunnel in the background
 echo -e "${GREEN}🌐 Starting Ngrok tunnel...${NC}"
-nohup ngrok http --log=stdout 80 > ~/ngrok.log 2>&1 &
+nohup ngrok http --log=stdout 8080 > ~/ngrok.log 2>&1 &
 
 # Wait for Ngrok to start
 echo "⏳ Waiting for tunnel to establish..."
@@ -559,7 +572,7 @@ chown $ACTUAL_USER:$ACTUAL_USER $USER_HOME/update-pi-chat.sh
 
 # Start Ngrok tunnel
 log "🌐 Starting Ngrok tunnel..."
-sudo -u $ACTUAL_USER bash -c "nohup ngrok http --log=stdout 80 > $USER_HOME/ngrok.log 2>&1 &"
+sudo -u $ACTUAL_USER bash -c "nohup ngrok http --log=stdout 8080 > $USER_HOME/ngrok.log 2>&1 &"
 
 # Wait for Ngrok to start and get URL
 log "⏳ Waiting for Ngrok to establish tunnel..."
@@ -631,7 +644,8 @@ else
 fi
 echo ""
 echo "🔧 LOCAL ACCESS:"
-echo "   http://localhost:3000"
+echo "   App (Direct):  http://localhost:3000"
+echo "   Nginx (Proxy): http://localhost:8080"
 echo ""
 echo "📊 SERVICE STATUS:"
 echo "   sudo systemctl status pi-chat"
@@ -659,7 +673,7 @@ Generated: $(date)
 ═══════════════════════════════════════
 Public URL: $NGROK_URL
 Local URL: http://localhost:3000
-Local (Nginx): http://localhost:80
+Local (Nginx): http://localhost:8080
 Ngrok Dashboard: http://localhost:4040
 
 ═══════════════════════════════════════
@@ -752,7 +766,7 @@ Check all services:
 
 Test connections:
   curl -I http://localhost:3000  # App
-  curl -I http://localhost:80    # Nginx
+  curl -I http://localhost:8080    # Nginx
   curl http://localhost:4040/api/tunnels  # Ngrok
 
 View all logs:
