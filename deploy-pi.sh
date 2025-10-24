@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Pi-Chat Deployment Script for Ubuntu 24.04
+# Pi-Chat Deployment Script for Raspberry Pi OS (Debian 13 Trixie)
 # Deploys Next.js chat application with MongoDB Atlas, Nginx, and Ngrok
+# Compatible with Raspberry Pi 3, 4, 5, and Zero 2 W
 
 # Exit on error and print commands
 set -e
@@ -11,6 +12,7 @@ set -x
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
@@ -21,6 +23,16 @@ NGROK_AUTH_TOKEN="34VRqCR1RxyNl66HNouWceHmA96_7btc3WYii8zQEgb1ZJt1"
 # Logging function
 log() {
     echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
+}
+
+# Warning function
+warn() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+# Info function
+info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
 }
 
 # Error function
@@ -34,13 +46,34 @@ if [ "$(id -u)" -ne 0 ]; then
     error_exit "Please run as root or use sudo"
 fi
 
-log "🚀 Starting Pi-Chat deployment on Ubuntu 24.04"
+log "🍓 Starting Pi-Chat deployment on Raspberry Pi OS (Debian 13 Trixie)"
 log "📦 This will install: Node.js, PM2, Nginx, Ngrok, and deploy the chat app"
+
+# Detect Raspberry Pi model
+if [ -f /proc/cpuinfo ]; then
+    PI_MODEL=$(grep "Model" /proc/cpuinfo | cut -d ":" -f 2 | xargs || echo "Unknown")
+    info "Detected: $PI_MODEL"
+    
+    # Check for minimum requirements
+    TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
+    info "Total RAM: ${TOTAL_MEM}MB"
+    
+    if [ "$TOTAL_MEM" -lt 1024 ]; then
+        warn "Low memory detected! Minimum 1GB RAM recommended for optimal performance"
+        warn "Consider enabling swap if not already enabled"
+    fi
+fi
+
+# Check Debian version
+if [ -f /etc/os-release ]; then
+    DEBIAN_VERSION=$(grep VERSION_ID /etc/os-release | cut -d '"' -f 2)
+    info "Debian version: $DEBIAN_VERSION"
+fi
 
 # Get the actual non-root user
 ACTUAL_USER=$(logname 2>/dev/null || echo $SUDO_USER)
 if [ -z "$ACTUAL_USER" ]; then
-    ACTUAL_USER="ubuntu"  # Default to ubuntu if we can't determine
+    ACTUAL_USER="pi"  # Default to pi for Raspberry Pi OS
 fi
 USER_HOME="/home/$ACTUAL_USER"
 
@@ -103,32 +136,41 @@ log "✅ PM2 version: $PM2_VERSION"
 
 # Setup PM2 to start on boot
 log "🔧 Setting up PM2 startup..."
-# Get the current non-root user (usually 'ubuntu' on cloud instances)
+# Get the current non-root user (usually 'pi' on Raspberry Pi OS)
 CURRENT_USER=$(whoami)
-pm2 startup -u $CURRENT_USER --hp /home/$CURRENT_USER | tail -n 1 | bash || log "Warning: Failed to set up PM2 startup"
-pm2 save || log "Warning: Failed to save PM2 process list"
+pm2 startup -u $ACTUAL_USER --hp $USER_HOME | tail -n 1 | bash || warn "Failed to set up PM2 startup (non-critical)"
+pm2 save || warn "Failed to save PM2 process list (non-critical)"
 
-# Install Ngrok using snap (recommended method)
-log "🔌 Installing Ngrok using snap..."
+# Install Ngrok for Raspberry Pi (ARM architecture)
+log "🔌 Installing Ngrok for Raspberry Pi..."
 if ! command -v ngrok &> /dev/null; then
-    # Install snapd if not already installed
-    if ! command -v snap &> /dev/null; then
-        log "📦 Installing snapd..."
-        apt-get update
-        apt-get install -y snapd
-        systemctl enable --now snapd.socket
-        systemctl restart snapd
-    fi
-
-    # Install ngrok using snap
-    snap install ngrok || error_exit "Failed to install ngrok via snap"
+    # Detect architecture
+    ARCH=$(uname -m)
+    log "Detected architecture: $ARCH"
     
-    # Create a symlink to make it available in the PATH
-    ln -s /snap/bin/ngrok /usr/local/bin/ngrok || true
+    # Determine Ngrok download URL based on architecture
+    if [[ "$ARCH" == "aarch64" ]] || [[ "$ARCH" == "arm64" ]]; then
+        NGROK_URL="https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz"
+        log "Using ARM64 version"
+    elif [[ "$ARCH" == "armv7l" ]] || [[ "$ARCH" == "armhf" ]]; then
+        NGROK_URL="https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm.tgz"
+        log "Using ARMv7 version"
+    else
+        error_exit "Unsupported architecture: $ARCH"
+    fi
+    
+    # Download and install ngrok
+    log "Downloading Ngrok..."
+    cd /tmp
+    curl -L $NGROK_URL -o ngrok.tgz || error_exit "Failed to download Ngrok"
+    tar -xzf ngrok.tgz || error_exit "Failed to extract Ngrok"
+    mv ngrok /usr/local/bin/ngrok || error_exit "Failed to install Ngrok"
+    chmod +x /usr/local/bin/ngrok
+    rm -f ngrok.tgz
     
     # Verify installation
-    if ngrok --version &> /dev/null; then
-        log "✅ Ngrok $(ngrok --version) installed successfully"
+    if ngrok version &> /dev/null; then
+        log "✅ Ngrok $(ngrok version) installed successfully"
     else
         error_exit "Failed to verify Ngrok installation"
     fi
@@ -418,7 +460,7 @@ fi
 log "🎉 Deployment Complete!"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  ✅ Pi-Chat is now running!"
+echo "  🍓 Pi-Chat is now running on your Raspberry Pi!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "🌍 PUBLIC URL:"
