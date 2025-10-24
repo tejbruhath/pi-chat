@@ -213,12 +213,20 @@ else
     log "ℹ️  Ngrok is already installed: $(ngrok version | head -n1 || echo 'unknown version')"
 fi
 
-# Configure Ngrok auth token
-log "🔑 Configuring Ngrok auth token..."
+# Configure Ngrok auth token (as the actual user, not root)
+log "🔑 Configuring Ngrok auth token for user: $ACTUAL_USER..."
 if command -v ngrok &> /dev/null; then
-    ngrok config add-authtoken $NGROK_AUTH_TOKEN \
+    # Run as the actual user so config goes to their home directory
+    sudo -u $ACTUAL_USER ngrok config add-authtoken $NGROK_AUTH_TOKEN \
         || error_exit "Failed to add Ngrok auth token"
-    log "✅ Ngrok auth token configured successfully"
+    log "✅ Ngrok auth token configured successfully at: $USER_HOME/.config/ngrok/ngrok.yml"
+    
+    # Verify the config was created
+    if [ -f "$USER_HOME/.config/ngrok/ngrok.yml" ]; then
+        log "✅ Ngrok config file verified"
+    else
+        warn "Config file not found at expected location, but command succeeded"
+    fi
 else
     error_exit "Ngrok not found. Cannot configure auth token."
 fi
