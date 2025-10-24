@@ -89,21 +89,30 @@ CURRENT_USER=$(whoami)
 pm2 startup -u $CURRENT_USER --hp /home/$CURRENT_USER | tail -n 1 | bash || log "Warning: Failed to set up PM2 startup"
 pm2 save || log "Warning: Failed to save PM2 process list"
 
-# Install Ngrok
-log "🔌 Installing Ngrok..."
+# Install Ngrok using snap (recommended method)
+log "🔌 Installing Ngrok using snap..."
 if ! command -v ngrok &> /dev/null; then
-    NGROK_VERSION="3.5.0"
-    NGROK_ARCH="linux-amd64"
-    NGROK_URL="https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v${NGROK_VERSION}-${NGROK_ARCH}.tgz"
+    # Install snapd if not already installed
+    if ! command -v snap &> /dev/null; then
+        log "📦 Installing snapd..."
+        apt-get update
+        apt-get install -y snapd
+        systemctl enable --now snapd.socket
+        systemctl restart snapd
+    fi
+
+    # Install ngrok using snap
+    snap install ngrok || error_exit "Failed to install ngrok via snap"
     
-    curl -sSL $NGROK_URL -o /tmp/ngrok.tgz || error_exit "Failed to download Ngrok"
-    tar xzf /tmp/ngrok.tgz -C /usr/local/bin/ || error_exit "Failed to extract Ngrok"
-    rm -f /tmp/ngrok.tgz
+    # Create a symlink to make it available in the PATH
+    ln -s /snap/bin/ngrok /usr/local/bin/ngrok || true
     
-    if ! ngrok --version &> /dev/null; then
+    # Verify installation
+    if ngrok --version &> /dev/null; then
+        log "✅ Ngrok $(ngrok --version) installed successfully"
+    else
         error_exit "Failed to verify Ngrok installation"
     fi
-    log "✅ Ngrok $(ngrok --version) installed successfully"
 else
     log "ℹ️  Ngrok is already installed"
 fi
@@ -118,27 +127,25 @@ else
     error_exit "Ngrok not found. Cannot configure auth token."
 fi
 
-# Clean up any existing Nginx repository configurations
-log "🧹 Cleaning up any existing Nginx repository configurations..."
-rm -f /etc/apt/sources.list.d/nginx-*.list* 2>/dev/null || true
-rm -f /etc/apt/sources.list.d/nginx.list* 2>/dev/null || true
+# Install Nginx
+log "📦 Installing Nginx..."
 
-# Install Nginx with NJS module from Ubuntu's official repository
-log "📦 Installing Nginx with NJS module..."
-
-# First, clean the package cache
-apt-get clean
-rm -rf /var/lib/apt/lists/*
-
-# Update package lists without any Nginx repositories
+# Update package lists
 apt-get update || error_exit "Failed to update package lists"
 
-# Install Nginx with NJS module from Ubuntu's repository
+# Install Nginx from Ubuntu's repository
 apt-get install -y --no-install-recommends \
     nginx \
-    libnginx-mod-njs \
-    libnginx-mod-http-js \
-    nginx-common || error_exit "Failed to install Nginx with NJS module"
+    nginx-common || error_exit "Failed to install Nginx"
+
+# Configure UFW to allow Nginx traffic
+if command -v ufw &> /dev/null; then
+    log "🔧 Configuring UFW for Nginx..."
+    ufw allow 'Nginx HTTP' || log "⚠️  Failed to configure UFW for HTTP"
+    ufw allow 'Nginx HTTPS' || log "⚠️  Failed to configure UFW for HTTPS"
+    ufw --force enable || log "⚠️  Failed to enable UFW"
+    ufw status || log "⚠️  Failed to check UFW status"
+fi
 
 # Verify Nginx installation
 if ! command -v nginx &> /dev/null; then
