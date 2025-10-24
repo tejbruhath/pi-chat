@@ -23,6 +23,8 @@ import {
   Send,
   X,
   UserPlus,
+  Menu,
+  ArrowLeft,
 } from "lucide-react";
 import { useSocket } from "@/lib/useSocket";
 
@@ -82,6 +84,7 @@ export default function ChatInterface() {
   const [editingName, setEditingName] = useState(user?.name || "");
   const [editingAvatar, setEditingAvatar] = useState(user?.avatar || "");
   const [readMessages, setReadMessages] = useState<Set<string>>(new Set());
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -480,11 +483,35 @@ export default function ChatInterface() {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-gray-50 overflow-hidden">
+      {/* Mobile sidebar backdrop */}
+      {isMobileSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setIsMobileSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <div className="w-80 border-r border-gray-200 flex flex-col bg-white">
+      <div
+        className={`
+          fixed lg:static inset-y-0 left-0 z-50
+          w-80 border-r border-gray-200 flex flex-col bg-white
+          transform transition-transform duration-300 ease-in-out
+          ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+        `}
+      >
         {/* User profile */}
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+          {/* Close button for mobile */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="lg:hidden mr-2"
+            onClick={() => setIsMobileSidebarOpen(false)}
+          >
+            <X className="h-5 w-5" />
+          </Button>
           <div
             className="flex items-center space-x-3 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
             onClick={() => setProfileEditOpen(true)}
@@ -529,12 +556,13 @@ export default function ChatInterface() {
           <Dialog open={newChatDialogOpen} onOpenChange={setNewChatDialogOpen}>
             <DialogTrigger asChild>
               <Button
-                className="flex-1 justify-start gap-2"
+                className="flex-1 justify-center sm:justify-start gap-2 text-xs sm:text-sm"
                 variant="outline"
                 size="sm"
               >
                 <MessageSquarePlus className="h-4 w-4" />
-                New Chat
+                <span className="hidden sm:inline">New Chat</span>
+                <span className="sm:hidden">Chat</span>
               </Button>
             </DialogTrigger>
             <DialogContent>
@@ -591,12 +619,13 @@ export default function ChatInterface() {
           >
             <DialogTrigger asChild>
               <Button
-                className="flex-1 justify-start gap-2"
+                className="flex-1 justify-center sm:justify-start gap-2 text-xs sm:text-sm"
                 variant="outline"
                 size="sm"
               >
                 <Users className="h-4 w-4" />
-                New Group
+                <span className="hidden sm:inline">New Group</span>
+                <span className="sm:hidden">Group</span>
               </Button>
             </DialogTrigger>
             <DialogContent>
@@ -764,7 +793,10 @@ export default function ChatInterface() {
                         ? "bg-blue-50"
                         : ""
                     }`}
-                    onClick={() => setSelectedConversation(conversation.id)}
+                    onClick={() => {
+                      setSelectedConversation(conversation.id);
+                      setIsMobileSidebarOpen(false); // Close sidebar on mobile
+                    }}
                   >
                     <div className="relative">
                       <Avatar className="border-2 border-black">
@@ -782,11 +814,11 @@ export default function ChatInterface() {
                     </div>
                     <div className="ml-3 flex-1 min-w-0">
                       <div className="flex justify-between items-start">
-                        <p className="font-medium truncate text-gray-900">
+                        <p className="font-medium truncate text-gray-900 text-sm sm:text-base">
                           {conversation.name}
                         </p>
                         {conversation.lastMessage && (
-                          <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
+                          <span className="text-[10px] sm:text-xs text-gray-500 ml-2 flex-shrink-0">
                             {new Date(
                               conversation.lastMessage.sentAt * 1000
                             ).toLocaleTimeString([], {
@@ -797,9 +829,14 @@ export default function ChatInterface() {
                         )}
                       </div>
                       {conversation.lastMessage && (
-                        <p className="text-sm text-gray-600 truncate mt-1">
-                          {conversation.lastMessage.senderName}:{" "}
-                          {conversation.lastMessage.content}
+                        <p className="text-xs sm:text-sm text-gray-500 truncate mt-0.5">
+                          {conversation.lastMessage.senderId === user.id
+                            ? "You: "
+                            : conversation.isGroup
+                            ? `${conversation.lastMessage.senderName}: `
+                            : ""}
+                          {conversation.lastMessage.content ||
+                            "[Media attachment]"}
                         </p>
                       )}
                     </div>
@@ -823,6 +860,15 @@ export default function ChatInterface() {
           <>
             {/* Chat header */}
             <div className="h-16 border-b border-gray-200 flex items-center px-4 justify-between bg-white">
+              {/* Mobile menu button */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="lg:hidden mr-2"
+                onClick={() => setIsMobileSidebarOpen(true)}
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
               <div
                 className="flex items-center cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
                 onClick={() => setUserDetailsOpen(true)}
@@ -837,8 +883,8 @@ export default function ChatInterface() {
                   </AvatarFallback>
                 </Avatar>
                 <div className="ml-3">
-                  <p className="font-medium">{selectedConv.name}</p>
-                  <p className="text-xs text-gray-500">
+                  <p className="font-medium text-sm md:text-base truncate">{selectedConv.name}</p>
+                  <p className="text-xs text-gray-500 hidden sm:block">
                     {selectedConv.isGroup
                       ? `${selectedConv.participants.length} members`
                       : "Active now"}
@@ -850,9 +896,10 @@ export default function ChatInterface() {
                   variant="outline"
                   size="sm"
                   onClick={() => setMediaModalOpen(true)}
-                  className="text-sm"
+                  className="text-xs md:text-sm hidden sm:flex"
                 >
-                  Browse Media in this chat
+                  <span className="hidden md:inline">Browse Media</span>
+                  <Paperclip className="h-4 w-4 md:hidden" />
                 </Button>
               </div>
             </div>
@@ -870,7 +917,7 @@ export default function ChatInterface() {
                     }`}
                   >
                     <div
-                      className={`max-w-xs lg:max-w-md ${
+                      className={`max-w-[85%] sm:max-w-xs lg:max-w-md ${
                         message.senderId === user.id
                           ? "bg-indigo-600 text-white"
                           : "bg-white text-gray-900"
@@ -978,7 +1025,17 @@ export default function ChatInterface() {
             </div>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center bg-gray-50">
+          <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 p-4">
+            {/* Mobile: Show menu button */}
+            <Button
+              variant="outline"
+              size="lg"
+              className="lg:hidden mb-8"
+              onClick={() => setIsMobileSidebarOpen(true)}
+            >
+              <Menu className="mr-2 h-5 w-5" />
+              Open Conversations
+            </Button>
             <div className="text-center p-6 max-w-md">
               <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 mb-4">
                 <MessageSquarePlus className="h-6 w-6 text-indigo-600" />
@@ -986,11 +1043,14 @@ export default function ChatInterface() {
               <h3 className="text-lg font-medium text-gray-900 mb-2">
                 No conversation selected
               </h3>
-              <p className="text-gray-500 mb-6">
-                Select a conversation from the sidebar or start a new one to
-                begin messaging.
+              <p className="text-gray-500 mb-6 text-sm md:text-base">
+                <span className="hidden lg:inline">Select a conversation from the sidebar or start a new one to begin messaging.</span>
+                <span className="lg:hidden">Open the menu to view your conversations or start a new chat.</span>
               </p>
-              <Button onClick={() => setNewChatDialogOpen(true)}>
+              <Button onClick={() => {
+                setNewChatDialogOpen(true);
+                setIsMobileSidebarOpen(false);
+              }}>
                 <MessageSquarePlus className="mr-2 h-4 w-4" />
                 New Message
               </Button>
