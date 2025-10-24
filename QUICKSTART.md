@@ -70,17 +70,18 @@ npx kill-port 3000
 npm run dev
 ```
 
-### Database Issues?
-```bash
-# Delete and recreate the database
-del chat.db
-npm run dev
-```
+### Database Connection Issues?
+The app uses **MongoDB Atlas** (cloud database):
+- No local setup required
+- Connection string is pre-configured in `lib/db.ts`
+- Check internet connection if you see database errors
+- MongoDB Atlas cluster: `pi-chat.qeg5ums.mongodb.net`
 
 ### WebSocket Not Connecting?
 - Check console for errors
 - Make sure server is running on port 3000
 - Refresh the page
+- Verify `server.js` is running (included in `npm run dev`)
 
 ---
 

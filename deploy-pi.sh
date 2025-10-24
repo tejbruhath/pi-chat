@@ -157,44 +157,45 @@ CURRENT_USER=$(whoami)
 pm2 startup -u $ACTUAL_USER --hp $USER_HOME | tail -n 1 | bash || warn "Failed to set up PM2 startup (non-critical)"
 pm2 save || warn "Failed to save PM2 process list (non-critical)"
 
-# Install Ngrok (supports ARM and x86_64)
-log "🔌 Installing Ngrok..."
+# Install Ngrok (official apt repository method)
+log "🔌 Installing Ngrok via official repository..."
 if ! command -v ngrok &> /dev/null; then
-    # Detect architecture
-    ARCH=$(uname -m)
-    log "Detected architecture: $ARCH"
+    log "Adding Ngrok apt repository..."
     
-    # Determine Ngrok download URL based on architecture
-    if [[ "$ARCH" == "x86_64" ]] || [[ "$ARCH" == "amd64" ]]; then
-        NGROK_URL="https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz"
-        log "Using x86_64/AMD64 version"
-    elif [[ "$ARCH" == "aarch64" ]] || [[ "$ARCH" == "arm64" ]]; then
-        NGROK_URL="https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz"
-        log "Using ARM64 version"
-    elif [[ "$ARCH" == "armv7l" ]] || [[ "$ARCH" == "armhf" ]]; then
-        NGROK_URL="https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm.tgz"
-        log "Using ARMv7 version"
+    # Add Ngrok GPG key
+    curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+        | tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
+        || warn "Failed to add Ngrok GPG key"
+    
+    # Determine Debian codename
+    if [ -f /etc/os-release ]; then
+        DEBIAN_CODENAME=$(grep VERSION_CODENAME /etc/os-release | cut -d= -f2)
+        if [ -z "$DEBIAN_CODENAME" ]; then
+            DEBIAN_CODENAME="bookworm"  # Default for Debian 12/13
+        fi
     else
-        error_exit "Unsupported architecture: $ARCH"
+        DEBIAN_CODENAME="bookworm"
     fi
     
-    # Download and install ngrok
-    log "Downloading Ngrok..."
-    cd /tmp
-    curl -L $NGROK_URL -o ngrok.tgz || error_exit "Failed to download Ngrok"
-    tar -xzf ngrok.tgz || error_exit "Failed to extract Ngrok"
-    mv ngrok /usr/local/bin/ngrok || error_exit "Failed to install Ngrok"
-    chmod +x /usr/local/bin/ngrok
-    rm -f ngrok.tgz
+    log "Using Debian codename: $DEBIAN_CODENAME"
+    
+    # Add Ngrok repository
+    echo "deb https://ngrok-agent.s3.amazonaws.com $DEBIAN_CODENAME main" \
+        | tee /etc/apt/sources.list.d/ngrok.list
+    
+    # Update and install
+    apt-get update || error_exit "Failed to update package lists after adding Ngrok repo"
+    apt-get install -y ngrok || error_exit "Failed to install Ngrok"
     
     # Verify installation
     if ngrok version &> /dev/null; then
-        log "✅ Ngrok $(ngrok version) installed successfully"
+        NGROK_VER=$(ngrok version | head -n1 || echo "unknown")
+        log "✅ Ngrok installed successfully: $NGROK_VER"
     else
         error_exit "Failed to verify Ngrok installation"
     fi
 else
-    log "ℹ️  Ngrok is already installed"
+    log "ℹ️  Ngrok is already installed: $(ngrok version | head -n1 || echo 'unknown version')"
 fi
 
 # Configure Ngrok auth token
@@ -336,26 +337,79 @@ log "📝 Creating Ngrok management scripts..."
 cat > $USER_HOME/start-ngrok.sh << 'EOL'
 #!/bin/bash
 
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Stop any existing ngrok instances
+pkill -f ngrok 2>/dev/null || true
+sleep 2
+
 # Start Ngrok tunnel in the background
-echo "🌐 Starting Ngrok tunnel..."
+echo -e "${GREEN}🌐 Starting Ngrok tunnel...${NC}"
 nohup ngrok http --log=stdout 80 > ~/ngrok.log 2>&1 &
 
 # Wait for Ngrok to start
-sleep 5
+echo "⏳ Waiting for tunnel to establish..."
+sleep 8
 
-# Get public URL
-NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'https://[^"]*ngrok[^"]*' | head -n1 || true)
+# Try to get the public URL
+NGROK_URL=""
+NGROK_ERROR=""
 
-if [ -z "$NGROK_URL" ]; then
-    NGROK_URL=$(grep -o 'https://[^ ]*ngrok[^ ]*' ~/ngrok.log 2>/dev/null | tail -n1 || echo "")
+for i in {1..3}; do
+    echo "Attempt $i: Checking Ngrok API..."
+    NGROK_RESPONSE=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null || echo "")
+    
+    if [ -n "$NGROK_RESPONSE" ]; then
+        # Check for errors
+        if echo "$NGROK_RESPONSE" | grep -q "err_ngrok"; then
+            NGROK_ERROR=$(echo "$NGROK_RESPONSE" | grep -o 'err_ngrok_[0-9]*' | head -n1)
+            echo -e "${RED}⚠️  Ngrok error: $NGROK_ERROR${NC}"
+            break
+        fi
+        
+        # Extract URL
+        NGROK_URL=$(echo "$NGROK_RESPONSE" | grep -o '"public_url":"https://[^"]*"' | cut -d'"' -f4 | head -n1)
+        
+        if [ -n "$NGROK_URL" ] && [[ "$NGROK_URL" == https://*.ngrok* ]]; then
+            break
+        fi
+    fi
+    
+    if [ $i -lt 3 ]; then
+        sleep 3
+    fi
+done
+
+# Try log file if API failed
+if [ -z "$NGROK_URL" ] && [ -z "$NGROK_ERROR" ]; then
+    NGROK_URL=$(grep -o 'url=https://[^ ]*\.ngrok[^ ]*' ~/ngrok.log 2>/dev/null | cut -d= -f2 | tr -d '\r' | head -n1 || echo "")
 fi
 
-if [ -n "$NGROK_URL" ]; then
-    echo "✅ Ngrok tunnel established!"
-    echo "🌍 Your Pi-Chat is available at: $NGROK_URL"
-    echo "📊 Ngrok dashboard: http://localhost:4040"
+# Display results
+echo ""
+if [ -n "$NGROK_URL" ] && [ -z "$NGROK_ERROR" ]; then
+    echo -e "${GREEN}✅ Ngrok tunnel established!${NC}"
+    echo -e "${GREEN}🌍 Public URL: $NGROK_URL${NC}"
+    echo -e "${GREEN}📊 Dashboard:  http://localhost:4040${NC}"
+elif [ -n "$NGROK_ERROR" ]; then
+    echo -e "${RED}❌ Ngrok tunnel failed: $NGROK_ERROR${NC}"
+    echo ""
+    echo -e "${YELLOW}Common causes:${NC}"
+    echo "  • Free tier limitations"
+    echo "  • Account not verified"
+    echo "  • Too many active tunnels"
+    echo ""
+    echo -e "${YELLOW}Solutions:${NC}"
+    echo "  1. Visit: https://dashboard.ngrok.com"
+    echo "  2. Check logs: tail -f ~/ngrok.log"
+    echo "  3. Verify setup: ngrok config check"
 else
-    echo "⚠️  Failed to get Ngrok URL. Check ~/ngrok.log for details."
+    echo -e "${RED}⚠️  Could not get Ngrok URL${NC}"
+    echo "Check logs: tail -f ~/ngrok.log"
 fi
 EOL
 
@@ -466,14 +520,42 @@ sudo -u $ACTUAL_USER bash -c "nohup ngrok http --log=stdout 80 > $USER_HOME/ngro
 
 # Wait for Ngrok to start and get URL
 log "⏳ Waiting for Ngrok to establish tunnel..."
-sleep 5
+sleep 8
 
-# Try to get the public URL
-NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'https://[^"]*ngrok[^"]*' | head -n1 || true)
+# Try to get the public URL from API
+NGROK_URL=""
+NGROK_ERROR=""
+for i in {1..3}; do
+    log "Attempt $i: Checking Ngrok API..."
+    NGROK_RESPONSE=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null || echo "")
+    
+    if [ -n "$NGROK_RESPONSE" ]; then
+        # Check for errors in response
+        if echo "$NGROK_RESPONSE" | grep -q "err_ngrok"; then
+            NGROK_ERROR=$(echo "$NGROK_RESPONSE" | grep -o 'err_ngrok_[0-9]*' | head -n1)
+            warn "Ngrok error detected: $NGROK_ERROR"
+            break
+        fi
+        
+        # Try to extract URL
+        NGROK_URL=$(echo "$NGROK_RESPONSE" | grep -o '"public_url":"https://[^"]*"' | cut -d'"' -f4 | head -n1)
+        
+        if [ -n "$NGROK_URL" ] && [[ "$NGROK_URL" == https://*.ngrok* ]]; then
+            log "✅ Ngrok tunnel established!"
+            break
+        fi
+    fi
+    
+    if [ $i -lt 3 ]; then
+        sleep 3
+    fi
+done
 
-if [ -z "$NGROK_URL" ]; then
-    # Fallback: try to extract from log file
-    NGROK_URL=$(grep -o 'https://[^ ]*ngrok[^ ]*' $USER_HOME/ngrok.log 2>/dev/null | tail -n1 || echo "")
+# If API failed, try log file as fallback
+if [ -z "$NGROK_URL" ] || [ -n "$NGROK_ERROR" ]; then
+    warn "Could not get URL from API, checking log file..."
+    sleep 2
+    NGROK_URL=$(grep -o 'url=https://[^ ]*\.ngrok[^ ]*' $USER_HOME/ngrok.log 2>/dev/null | cut -d= -f2 | tr -d '\r' | head -n1 || echo "")
 fi
 
 log "🎉 Deployment Complete!"
@@ -483,10 +565,26 @@ echo "  ✅ Pi-Chat is now running on your server!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "🌍 PUBLIC URL:"
-if [ -n "$NGROK_URL" ]; then
+if [ -n "$NGROK_URL" ] && [ -z "$NGROK_ERROR" ]; then
     echo "   $NGROK_URL"
+elif [ -n "$NGROK_ERROR" ]; then
+    echo "   ⚠️  Ngrok tunnel failed: $NGROK_ERROR"
+    echo ""
+    echo "   Common causes:"
+    echo "   - Free tier limitations (try upgrading at ngrok.com)"
+    echo "   - Account not verified"
+    echo "   - Too many active tunnels"
+    echo "   - Invalid auth token"
+    echo ""
+    echo "   Troubleshooting:"
+    echo "   1. Check logs: tail -f $USER_HOME/ngrok.log"
+    echo "   2. Verify auth token: ngrok config check"
+    echo "   3. Visit: https://dashboard.ngrok.com/get-started/setup"
+    echo "   4. Or use: $USER_HOME/start-ngrok.sh"
 else
-    echo "   Check ngrok.log: cat $USER_HOME/ngrok.log"
+    echo "   ⚠️  Could not get Ngrok URL"
+    echo "   Check logs: tail -f $USER_HOME/ngrok.log"
+    echo "   Or restart: $USER_HOME/start-ngrok.sh"
 fi
 echo ""
 echo "🔧 LOCAL ACCESS:"

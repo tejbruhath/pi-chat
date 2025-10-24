@@ -78,12 +78,13 @@ DELETE /api/conversations/{id}/participants?userId={userId}
 - **User Display**: Shows other user's name as conversation title
 
 ### 6. Message History
-- **Persistent Storage**: All messages saved to SQLite
+- **Persistent Storage**: All messages saved to MongoDB Atlas
 - **Chronological Order**: Messages sorted by timestamp
 - **Sender Information**: Shows name and avatar
-- **Timestamp Display**: Human-readable time format
+- **Timestamp Display**: Human-readable time format (Unix timestamps)
 - **Auto-Scroll**: Automatically scrolls to latest message
 - **Pagination Ready**: Limit 100 messages per fetch (expandable)
+- **Cloud Database**: MongoDB Atlas for scalable storage
 
 ### 7. Conversation List
 - **All Conversations**: Direct messages and groups
@@ -144,14 +145,19 @@ server.js
 └── User Presence (ready)
 ```
 
-### Database Schema
-```sql
-users              # User accounts
-conversations      # Chat conversations
+### Database Schema (MongoDB Collections)
+```javascript
+users              # User accounts with authentication
+conversations      # Chat conversations (name, isGroup)
 participants       # User-conversation relationships
 messages          # Chat messages with media support
-user_sessions     # Authentication sessions
+user_sessions     # Authentication sessions (token, expiresAt)
 ```
+
+**MongoDB Atlas**: Cloud-hosted database
+- Database: `pi-chat`
+- ODM: Mongoose for schema validation
+- Indexes: Automatically created for optimal performance
 
 ## 🎨 UI Components Used
 
@@ -197,8 +203,9 @@ user_sessions     # Authentication sessions
 - **CORS Configuration**: Restricted origins in production
 - **File Type Validation**: Only allowed file types
 - **File Size Limits**: 10MB maximum
-- **SQL Injection Prevention**: Drizzle ORM parameterized queries
+- **NoSQL Injection Prevention**: Mongoose sanitization and validation
 - **User Authorization**: Verify participants before allowing actions
+- **Cloud Security**: MongoDB Atlas with encryption at rest
 
 ## 🚀 Performance Optimizations
 
@@ -237,11 +244,13 @@ user_sessions     # Authentication sessions
 
 ## 📈 Scalability Considerations
 
-- **Database**: SQLite works for <100k messages, then migrate to PostgreSQL
+- **Database**: MongoDB Atlas scales automatically to millions of documents
 - **File Storage**: Currently local, migrate to S3/CDN for production
 - **WebSocket**: Current setup handles ~1000 concurrent users
 - **Message Queue**: Add Redis for message reliability at scale
 - **Load Balancing**: Use sticky sessions for WebSocket
+- **MongoDB Sharding**: Enable for horizontal scaling beyond millions of records
+- **Cloud Infrastructure**: MongoDB Atlas provides automatic backups and failover
 
 ## 🎓 Code Quality
 
