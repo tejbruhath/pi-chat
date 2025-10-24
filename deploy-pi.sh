@@ -118,8 +118,20 @@ else
     error_exit "Ngrok not found. Cannot configure auth token."
 fi
 
+# Clean up any existing Nginx repository configurations
+log "🧹 Cleaning up any existing Nginx repository configurations..."
+rm -f /etc/apt/sources.list.d/nginx-*.list* 2>/dev/null || true
+rm -f /etc/apt/sources.list.d/nginx.list* 2>/dev/null || true
+
 # Install Nginx with NJS module from Ubuntu's official repository
 log "📦 Installing Nginx with NJS module..."
+
+# First, clean the package cache
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+
+# Update package lists without any Nginx repositories
+apt-get update || error_exit "Failed to update package lists"
 
 # Install Nginx with NJS module from Ubuntu's repository
 apt-get install -y --no-install-recommends \
@@ -278,4 +290,4 @@ echo -e "\nNext steps:"
 echo "1. Run the setup script: ~/setup-pi-chat.sh"
 echo "2. Your application will be available at the Ngrok URL shown"
 echo "3. Check the status with: sudo systemctl status pi-chat"
-echo "4. View logs with: journalctl -u pi-chat -f"
+echo "4. View logs with: journalctl -u pi-chat -f"add
