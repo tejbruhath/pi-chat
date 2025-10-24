@@ -39,8 +39,6 @@ apt-get autoclean -y || log "Warning: Failed to clean package cache"
 # Install required dependencies
 log "📦 Installing system dependencies..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    nodejs \
-    npm \
     git \
     build-essential \
     python3-pip \
@@ -53,27 +51,35 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     gnupg \
     lsb-release || error_exit "Failed to install system dependencies"
 
+# Install Node.js from NodeSource
+log "📥 Installing Node.js from NodeSource..."
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || error_exit "Failed to add NodeSource repository"
+apt-get install -y nodejs || error_exit "Failed to install Node.js"
+
 # Ensure npm is up to date
 log "🔄 Updating npm to the latest version..."
 npm install -g npm@latest || error_exit "Failed to update npm"
 
 # Check Node.js version
 NODE_VERSION=$(node -v)
-if [[ "$NODE_VERSION" < "v16.0.0" ]]; then
-    log "⚠️  Node.js version $NODE_VERSION is below the recommended version (v16+). Consider upgrading."
-fi
+NPM_VERSION=$(npm -v)
+log "✅ Node.js version: $NODE_VERSION"
+log "✅ npm version: $NPM_VERSION"
 
-# Install PM2 process manager
+# Install PM2 process manager with specific version
 log "⚙️  Installing PM2..."
-npm install -g pm2 || error_exit "Failed to install PM2"
+npm install -g pm2@latest || error_exit "Failed to install PM2"
+
+# Verify PM2 installation
+PM2_VERSION=$(pm2 --version 2>/dev/null || echo "0")
+if [ "$PM2_VERSION" = "0" ]; then
+    error_exit "PM2 installation verification failed"
+fi
+log "✅ PM2 version: $PM2_VERSION"
 
 # Setup PM2 to start on boot
 log "🔧 Setting up PM2 startup..."
-if command -v pm2 &> /dev/null; then
-    pm2 startup | tail -n 1 | bash || log "Warning: Failed to set up PM2 startup"
-else
-    error_exit "PM2 not found after installation"
-fi
+pm2 startup | tail -n 1 | bash || log "Warning: Failed to set up PM2 startup"
 
 # Install Ngrok
 log "🔌 Installing Ngrok via official Debian package..."
@@ -104,9 +110,32 @@ else
     error_exit "Ngrok not found. Cannot configure auth token."
 fi
 
-# Install Nginx with NJS module
-echo "📦 Installing Nginx with NJS module..."
-sudo apt-get install -y nginx nginx-module-njs
+# Install specific version of Nginx with NJS module
+log "📦 Installing Nginx with NJS module..."
+NGINX_VERSION="1.25.3-1~bookworm"
+
+# Add Nginx repository
+apt-get install -y --no-install-recommends \
+    gnupg2 \
+    lsb-release \
+    ca-certificates \
+    curl || error_exit "Failed to install prerequisites"
+
+# Add Nginx signing key
+curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor | tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null || error_exit "Failed to add Nginx GPG key"
+
+# Add Nginx repository
+echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/debian $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list || error_exit "Failed to add Nginx repository"
+
+# Install specific version of Nginx with NJS module
+apt-get update || error_exit "Failed to update package lists for Nginx"
+apt-get install -y --no-install-recommends \
+    nginx=${NGINX_VERSION} \
+    nginx-module-njs || error_exit "Failed to install Nginx with NJS module"
+
+# Verify Nginx installation
+NGINX_VERSION_INSTALLED=$(nginx -v 2>&1 | awk -F'/' '{print $2}')
+log "✅ Nginx version: $NGINX_VERSION_INSTALLED"
 
 # Configure Nginx with NJS
 echo "🌐 Configuring Nginx with NJS..."
@@ -243,8 +272,14 @@ cat > ~/setup-pi-chat.sh << 'EOL'
 if [ ! -d "pi-chat" ]; then
     git clone https://github.com/tejbruhath/pi-chat.git
     cd pi-chat
-    npm install
-    npm run build
+    
+    # Install dependencies with exact versions
+    log "📦 Installing project dependencies..."
+    npm ci || error_exit "Failed to install project dependencies"
+    
+    # Build the project
+    log "🔨 Building the project..."
+    npm run build || error_exit "Build failed"
 else
     cd pi-chat
     git pull
