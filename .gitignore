@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# database
+chat.db
+chat.db-journal
+
+# uploads (keep directory structure)
+public/uploads/*
+!public/uploads/.gitkeep
