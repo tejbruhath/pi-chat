@@ -92,7 +92,7 @@ windsurf-chat/
 - **messages**: Chat messages (content, mediaUrl, mediaType, senderId, conversationId, sentAt)
 - **user_sessions**: Active user sessions (userId, token, expiresAt)
 
-See `MONGODB_SETUP.md` for detailed database configuration and query examples.
+See [MongoDB Setup Guide](docs/MONGODB_SETUP.md) for detailed database configuration and query examples.
 
 ## API Routes
 
@@ -170,6 +170,28 @@ See `MONGODB_SETUP.md` for detailed database configuration and query examples.
 - `new_message` - New message received
 - `user_typing` - Another user is typing
 - `user_stop_typing` - User stopped typing
+
+## 📚 Documentation
+
+Comprehensive documentation is available in the [`/docs`](docs/) folder:
+
+### Quick Start
+- [**Quickstart Guide**](docs/QUICKSTART.md) - Get up and running in 3 steps
+- [**Features Overview**](docs/FEATURES.md) - Complete feature list
+- [**MongoDB Setup**](docs/MONGODB_SETUP.md) - Database configuration
+
+### Deployment
+- [**Deployment Guide**](docs/DEPLOYMENT_GUIDE.md) - General deployment instructions
+- [**Raspberry Pi Deployment**](docs/RASPBERRY_PI_DEPLOYMENT.md) - Deploy on Raspberry Pi/EC2
+- [**Nginx Guide**](docs/NGINX_RASPBERRY_PI_GUIDE.md) - Nginx setup and commands
+
+### Troubleshooting
+- [**Auth Fix (401 Errors)**](docs/AUTH_FIX_401_ERRORS.md) - Fix authentication issues
+- [**Ngrok Troubleshooting**](docs/NGROK_TROUBLESHOOTING.md) - Tunnel issues and solutions
+
+### Additional
+- [**Mobile UI**](docs/MOBILE_IMPROVEMENTS.md) - Mobile responsive features
+- [**Documentation Index**](docs/README.md) - Complete documentation index
 
 ## Future Enhancements
 
