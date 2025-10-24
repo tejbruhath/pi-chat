@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { db } from '@/lib/db';
-import { userSessions } from '@/lib/schema';
-import { eq, and, gt } from 'drizzle-orm';
+import { connectDB } from '@/lib/db';
+import { UserSession } from '@/lib/schema';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: Request) {
   try {
+    await connectDB();
+    
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get('session_token')?.value;
 
@@ -20,11 +21,9 @@ export async function POST(request: Request) {
     }
 
     // Verify session
-    const session = await db.query.userSessions.findFirst({
-      where: and(
-        eq(userSessions.token, sessionToken),
-        gt(userSessions.expiresAt, Math.floor(Date.now() / 1000))
-      ),
+    const session = await UserSession.findOne({
+      token: sessionToken,
+      expiresAt: { $gt: Math.floor(Date.now() / 1000) }
     });
 
     if (!session) {

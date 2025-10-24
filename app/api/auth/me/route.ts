@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { db } from '@/lib/db';
-import { users, userSessions } from '@/lib/schema';
-import { eq, and, gt } from 'drizzle-orm';
+import { connectDB } from '@/lib/db';
+import { User, UserSession } from '@/lib/schema';
 
 export async function GET() {
   try {
+    await connectDB();
+    
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get('session_token')?.value;
 
@@ -17,22 +18,9 @@ export async function GET() {
     }
 
     // Find the session
-    const session = await db.query.userSessions.findFirst({
-      where: and(
-        eq(userSessions.token, sessionToken),
-        gt(userSessions.expiresAt, Math.floor(Date.now() / 1000))
-      ),
-      with: {
-        user: {
-          columns: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            createdAt: true,
-          },
-        },
-      },
+    const session = await UserSession.findOne({
+      token: sessionToken,
+      expiresAt: { $gt: Math.floor(Date.now() / 1000) }
     });
 
     if (!session) {
@@ -45,7 +33,27 @@ export async function GET() {
       return response;
     }
 
-    return NextResponse.json({ user: session.user });
+    // Get user data
+    const user = await User.findById(session.userId).select('-password');
+
+    if (!user) {
+      const response = NextResponse.json(
+        { message: 'User not found' },
+        { status: 401 }
+      );
+      response.cookies.delete('session_token');
+      return response;
+    }
+
+    const userData = {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      createdAt: Math.floor(new Date(user.createdAt).getTime() / 1000),
+    };
+
+    return NextResponse.json({ user: userData });
   } catch (error) {
     console.error('Session validation error:', error);
     return NextResponse.json(

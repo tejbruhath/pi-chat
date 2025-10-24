@@ -1,42 +1,21 @@
-import { sql } from 'drizzle-orm';
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+/**
+ * MongoDB Migration Notes
+ * 
+ * This application now uses MongoDB Atlas with Mongoose ODM.
+ * Database schema is defined in lib/schema.ts using Mongoose models.
+ * 
+ * Collections:
+ * - users: User accounts with authentication
+ * - conversations: Chat conversations (direct and group)
+ * - participants: User-conversation relationships
+ * - messages: Chat messages with media support
+ * - user_sessions: Active user sessions
+ * 
+ * Connection: mongodb+srv://tejdupes_db_user:KvTixU3C7KAvyc92@pi-chat.qeg5ums.mongodb.net/?appName=pi-chat
+ * Database: pi-chat
+ * 
+ * Indexes are automatically created by Mongoose based on schema definitions in lib/schema.ts
+ * No manual migrations are required for MongoDB - schemas are created on first use.
+ */
 
-export const users = sqliteTable('users', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  email: text('email').notNull().unique(),
-  avatar: text('avatar'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
-});
-
-export const conversations = sqliteTable('conversations', {
-  id: text('id').primaryKey(),
-  name: text('name'),
-  isGroup: integer('is_group', { mode: 'boolean' }).notNull().default(false),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
-});
-
-export const participants = sqliteTable('participants', {
-  id: text('id').primaryKey(),
-  userId: text('user_id').notNull().references(() => users.id),
-  conversationId: text('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
-  joinedAt: integer('joined_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
-});
-
-export const messages = sqliteTable('messages', {
-  id: text('id').primaryKey(),
-  content: text('content').notNull(),
-  mediaUrl: text('media_url'),
-  mediaType: text('media_type'),
-  senderId: text('sender_id').notNull().references(() => users.id),
-  conversationId: text('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
-  sentAt: integer('sent_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
-});
-
-export const userSessions = sqliteTable('user_sessions', {
-  id: text('id').primaryKey(),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
-  token: text('token').notNull().unique(),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
-});
+export {};

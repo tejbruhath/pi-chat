@@ -1,6 +1,6 @@
 # Modern Chat Application
 
-A feature-rich chat application built with Next.js 15, TypeScript, Tailwind CSS, and better-sqlite3.
+A feature-rich chat application built with Next.js 16, TypeScript, Tailwind CSS, and MongoDB Atlas.
 
 ## Features
 
@@ -13,18 +13,19 @@ A feature-rich chat application built with Next.js 15, TypeScript, Tailwind CSS,
 ✅ **Message History**: View conversation history with timestamps
 ✅ **Online Status**: See when you're connected to the chat server
 ✅ **Modern UI**: Beautiful, responsive design with shadcn/ui and Tailwind CSS
-✅ **Persistent Storage**: SQLite database for reliable data storage
+✅ **Persistent Storage**: MongoDB Atlas cloud database for scalable data storage
 ✅ **Group Management**: Add or remove members from group chats
 
 ## Tech Stack
 
-- **Framework**: Next.js 15 (App Router)
+- **Framework**: Next.js 16 (App Router)
 - **Language**: TypeScript
-- **Database**: better-sqlite3 with Drizzle ORM
-- **Styling**: Tailwind CSS
+- **Database**: MongoDB Atlas with Mongoose ODM
+- **Styling**: Tailwind CSS v4
 - **UI Components**: shadcn/ui (Radix UI primitives)
 - **Icons**: Lucide React
 - **Authentication**: Custom JWT-based sessions with HTTP-only cookies
+- **Real-time**: Socket.IO for WebSocket connections
 
 ## Getting Started
 
@@ -51,6 +52,8 @@ This will start both the Next.js app and WebSocket server on port 3000.
 
 3. Open [http://localhost:3000](http://localhost:3000) with your browser.
 
+**Note**: The application connects to MongoDB Atlas automatically. The connection string is configured in `lib/db.ts`. No local database setup is required.
+
 ### First Time Setup
 
 1. Navigate to the registration page at `/register`
@@ -74,19 +77,22 @@ windsurf-chat/
 │   ├── auth/              # Authentication context and components
 │   └── ui/                # Reusable UI components (shadcn/ui)
 ├── lib/
-│   ├── db.ts              # Database connection and initialization
-│   ├── schema.ts          # Database schema definitions
+│   ├── db.ts              # MongoDB Atlas connection with Mongoose
+│   ├── schema.ts          # Mongoose models and schemas
+│   ├── useSocket.ts       # WebSocket hook for real-time communication
 │   └── utils.ts           # Utility functions
-└── migrations/            # Database migrations
+└── migrations/            # Database migration notes
 ```
 
-## Database Schema
+## Database Schema (MongoDB Collections)
 
-- **users**: User accounts with authentication
-- **conversations**: Chat conversations (1-on-1 and group)
-- **participants**: User-conversation relationships
-- **messages**: Chat messages
-- **user_sessions**: Active user sessions
+- **users**: User accounts with authentication (name, email, password, avatar)
+- **conversations**: Chat conversations (name, isGroup, createdAt)
+- **participants**: User-conversation relationships (userId, conversationId, joinedAt)
+- **messages**: Chat messages (content, mediaUrl, mediaType, senderId, conversationId, sentAt)
+- **user_sessions**: Active user sessions (userId, token, expiresAt)
+
+See `MONGODB_SETUP.md` for detailed database configuration and query examples.
 
 ## API Routes
 

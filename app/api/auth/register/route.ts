@@ -1,18 +1,17 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { users, userSessions } from '@/lib/schema';
-import { eq } from 'drizzle-orm';
+import { connectDB } from '@/lib/db';
+import { User, UserSession } from '@/lib/schema';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
 
 export async function POST(request: Request) {
   try {
+    await connectDB();
+    
     const { name, email, password } = await request.json();
 
     // Check if user already exists
-    const existingUser = await db.query.users.findFirst({
-      where: eq(users.email, email),
-    });
+    const existingUser = await User.findOne({ email });
 
     if (existingUser) {
       return NextResponse.json(
@@ -23,11 +22,9 @@ export async function POST(request: Request) {
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-    const userId = uuidv4();
 
     // Create user
-    await db.insert(users).values({
-      id: userId,
+    const newUser = await User.create({
       name,
       email,
       password: hashedPassword,
@@ -38,24 +35,20 @@ export async function POST(request: Request) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7); // 7 days from now
 
-    await db.insert(userSessions).values({
-      id: uuidv4(),
-      userId,
+    await UserSession.create({
+      userId: newUser._id.toString(),
       token: sessionToken,
       expiresAt: Math.floor(expiresAt.getTime() / 1000),
     });
 
-    // Return user data (excluding password) and session token
-    const user = await db.query.users.findFirst({
-      where: eq(users.id, userId),
-      columns: {
-        id: true,
-        name: true,
-        email: true,
-        avatar: true,
-        createdAt: true,
-      },
-    });
+    // Return user data (excluding password)
+    const user = {
+      id: newUser._id.toString(),
+      name: newUser.name,
+      email: newUser.email,
+      avatar: newUser.avatar,
+      createdAt: Math.floor(new Date(newUser.createdAt).getTime() / 1000),
+    };
 
     const response = NextResponse.json({
       user,

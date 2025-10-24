@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { db } from '@/lib/db';
-import { users, userSessions } from '@/lib/schema';
-import { eq, and, gt, like, ne } from 'drizzle-orm';
+import { connectDB } from '@/lib/db';
+import { User, UserSession } from '@/lib/schema';
 
 export async function GET(request: Request) {
   try {
+    await connectDB();
+    
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get('session_token')?.value;
 
@@ -17,11 +18,9 @@ export async function GET(request: Request) {
     }
 
     // Verify session
-    const session = await db.query.userSessions.findFirst({
-      where: and(
-        eq(userSessions.token, sessionToken),
-        gt(userSessions.expiresAt, Math.floor(Date.now() / 1000))
-      ),
+    const session = await UserSession.findOne({
+      token: sessionToken,
+      expiresAt: { $gt: Math.floor(Date.now() / 1000) }
     });
 
     if (!session) {
@@ -38,24 +37,24 @@ export async function GET(request: Request) {
       return NextResponse.json({ users: [] });
     }
 
-    // Search for users by name or email (excluding current user)
-    const searchResults = await db
-      .select({
-        id: users.id,
-        name: users.name,
-        email: users.email,
-        avatar: users.avatar,
-      })
-      .from(users)
-      .where(
-        and(
-          ne(users.id, session.userId),
-          like(users.name, `%${query}%`)
-        )
-      )
-      .limit(10);
+    // Search for users by name (excluding current user)
+    const searchResults = await User.find({
+      _id: { $ne: session.userId },
+      name: { $regex: query, $options: 'i' }
+    })
+    .select('_id name email avatar')
+    .limit(10)
+    .lean();
 
-    return NextResponse.json({ users: searchResults });
+    // Transform results to match expected format
+    const users = searchResults.map(user => ({
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+    }));
+
+    return NextResponse.json({ users });
   } catch (error) {
     console.error('User search error:', error);
     return NextResponse.json(

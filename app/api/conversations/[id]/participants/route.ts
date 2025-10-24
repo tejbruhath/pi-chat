@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { db } from "@/lib/db";
-import { userSessions, conversations, participants } from "@/lib/schema";
-import { eq, and, gt } from "drizzle-orm";
-import { v4 as uuidv4 } from "uuid";
+import { connectDB } from "@/lib/db";
+import { UserSession, Conversation, Participant } from "@/lib/schema";
 
 // Add participants to a group conversation
 export async function POST(
@@ -11,6 +9,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await connectDB();
+    
     const { id: conversationId } = await params;
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get("session_token")?.value;
@@ -23,18 +23,15 @@ export async function POST(
     }
 
     // Verify session
-    const session = await db.query.userSessions.findFirst({
-      where: and(
-        eq(userSessions.token, sessionToken),
-        gt(userSessions.expiresAt, Math.floor(Date.now() / 1000))
-      ),
+    const session = await UserSession.findOne({
+      token: sessionToken,
+      expiresAt: { $gt: Math.floor(Date.now() / 1000) }
     });
 
     if (!session) {
       return NextResponse.json({ message: "Session expired" }, { status: 401 });
     }
 
-    // conversationId is already extracted from params above
     const { userIds } = await request.json();
 
     if (!userIds || !Array.isArray(userIds)) {
@@ -45,9 +42,7 @@ export async function POST(
     }
 
     // Verify conversation is a group
-    const conversation = await db.query.conversations.findFirst({
-      where: eq(conversations.id, conversationId),
-    });
+    const conversation = await Conversation.findById(conversationId);
 
     if (!conversation) {
       return NextResponse.json(
@@ -64,11 +59,9 @@ export async function POST(
     }
 
     // Verify user is a participant (only group members can add others)
-    const participation = await db.query.participants.findFirst({
-      where: and(
-        eq(participants.conversationId, conversationId),
-        eq(participants.userId, session.userId)
-      ),
+    const participation = await Participant.findOne({
+      conversationId,
+      userId: session.userId
     });
 
     if (!participation) {
@@ -79,16 +72,13 @@ export async function POST(
     const addedParticipants = [];
     for (const userId of userIds) {
       // Check if already a participant
-      const existing = await db.query.participants.findFirst({
-        where: and(
-          eq(participants.conversationId, conversationId),
-          eq(participants.userId, userId)
-        ),
+      const existing = await Participant.findOne({
+        conversationId,
+        userId
       });
 
       if (!existing) {
-        await db.insert(participants).values({
-          id: uuidv4(),
+        await Participant.create({
           userId,
           conversationId,
         });
@@ -115,6 +105,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await connectDB();
+    
     const { id: conversationId } = await params;
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get("session_token")?.value;
@@ -127,18 +119,15 @@ export async function DELETE(
     }
 
     // Verify session
-    const session = await db.query.userSessions.findFirst({
-      where: and(
-        eq(userSessions.token, sessionToken),
-        gt(userSessions.expiresAt, Math.floor(Date.now() / 1000))
-      ),
+    const session = await UserSession.findOne({
+      token: sessionToken,
+      expiresAt: { $gt: Math.floor(Date.now() / 1000) }
     });
 
     if (!session) {
       return NextResponse.json({ message: "Session expired" }, { status: 401 });
     }
 
-    // conversationId is already extracted from params above
     const { searchParams } = new URL(request.url);
     const userIdToRemove = searchParams.get("userId");
 
@@ -150,9 +139,7 @@ export async function DELETE(
     }
 
     // Verify conversation is a group
-    const conversation = await db.query.conversations.findFirst({
-      where: eq(conversations.id, conversationId),
-    });
+    const conversation = await Conversation.findById(conversationId);
 
     if (!conversation) {
       return NextResponse.json(
@@ -169,14 +156,10 @@ export async function DELETE(
     }
 
     // Remove participant
-    await db
-      .delete(participants)
-      .where(
-        and(
-          eq(participants.conversationId, conversationId),
-          eq(participants.userId, userIdToRemove)
-        )
-      );
+    await Participant.deleteOne({
+      conversationId,
+      userId: userIdToRemove
+    });
 
     return NextResponse.json({
       message: "Participant removed successfully",

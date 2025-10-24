@@ -1,14 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { db } from "@/lib/db";
-import {
-  users,
-  userSessions,
-  conversations,
-  participants,
-  messages,
-} from "@/lib/schema";
-import { eq, and, gt, desc } from "drizzle-orm";
+import { connectDB } from "@/lib/db";
+import { User, UserSession, Participant, Message } from "@/lib/schema";
 import { v4 as uuidv4 } from "uuid";
 
 // Get messages for a conversation
@@ -17,6 +10,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await connectDB();
+    
     const { id: conversationId } = await params;
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get("session_token")?.value;
@@ -29,11 +24,9 @@ export async function GET(
     }
 
     // Verify session
-    const session = await db.query.userSessions.findFirst({
-      where: and(
-        eq(userSessions.token, sessionToken),
-        gt(userSessions.expiresAt, Math.floor(Date.now() / 1000))
-      ),
+    const session = await UserSession.findOne({
+      token: sessionToken,
+      expiresAt: { $gt: Math.floor(Date.now() / 1000) }
     });
 
     if (!session) {
@@ -41,34 +34,36 @@ export async function GET(
     }
 
     // Verify user is a participant
-    const participation = await db.query.participants.findFirst({
-      where: and(
-        eq(participants.conversationId, conversationId),
-        eq(participants.userId, session.userId)
-      ),
+    const participation = await Participant.findOne({
+      conversationId,
+      userId: session.userId
     });
 
     if (!participation) {
       return NextResponse.json({ message: "Not authorized" }, { status: 403 });
     }
 
-    // Get messages
-    const messageList = await db
-      .select({
-        id: messages.id,
-        content: messages.content,
-        mediaUrl: messages.mediaUrl,
-        mediaType: messages.mediaType,
-        senderId: messages.senderId,
-        senderName: users.name,
-        senderAvatar: users.avatar,
-        sentAt: messages.sentAt,
+    // Get messages with sender info
+    const messagesDocs = await Message.find({ conversationId })
+      .sort({ sentAt: 1 })
+      .limit(100)
+      .lean();
+
+    const messageList = await Promise.all(
+      messagesDocs.map(async (msg) => {
+        const sender = await User.findById(msg.senderId).select('name avatar').lean();
+        return {
+          id: msg._id.toString(),
+          content: msg.content,
+          mediaUrl: msg.mediaUrl,
+          mediaType: msg.mediaType,
+          senderId: msg.senderId,
+          senderName: sender?.name || 'Unknown',
+          senderAvatar: sender?.avatar || null,
+          sentAt: Math.floor(new Date(msg.sentAt).getTime() / 1000),
+        };
       })
-      .from(messages)
-      .leftJoin(users, eq(messages.senderId, users.id))
-      .where(eq(messages.conversationId, conversationId))
-      .orderBy(messages.sentAt)
-      .limit(100);
+    );
 
     return NextResponse.json({ messages: messageList });
   } catch (error) {
@@ -86,6 +81,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await connectDB();
+    
     const { id: conversationId } = await params;
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get("session_token")?.value;
@@ -98,11 +95,9 @@ export async function POST(
     }
 
     // Verify session
-    const session = await db.query.userSessions.findFirst({
-      where: and(
-        eq(userSessions.token, sessionToken),
-        gt(userSessions.expiresAt, Math.floor(Date.now() / 1000))
-      ),
+    const session = await UserSession.findOne({
+      token: sessionToken,
+      expiresAt: { $gt: Math.floor(Date.now() / 1000) }
     });
 
     if (!session) {
@@ -119,11 +114,9 @@ export async function POST(
     }
 
     // Verify user is a participant
-    const participation = await db.query.participants.findFirst({
-      where: and(
-        eq(participants.conversationId, conversationId),
-        eq(participants.userId, session.userId)
-      ),
+    const participation = await Participant.findOne({
+      conversationId,
+      userId: session.userId
     });
 
     if (!participation) {
@@ -136,37 +129,30 @@ export async function POST(
     }
 
     // Create message
-    const messageId = uuidv4();
-    const now = Math.floor(Date.now() / 1000);
-
-    await db.insert(messages).values({
-      id: messageId,
+    const newMessage = await Message.create({
       content: content || "",
       mediaUrl: mediaUrl || null,
       mediaType: mediaType || null,
       senderId: session.userId,
       conversationId,
-      sentAt: now,
+      sentAt: new Date(),
     });
 
-    // Get the created message with sender info
-    const newMessage = await db
-      .select({
-        id: messages.id,
-        content: messages.content,
-        mediaUrl: messages.mediaUrl,
-        mediaType: messages.mediaType,
-        senderId: messages.senderId,
-        senderName: users.name,
-        senderAvatar: users.avatar,
-        sentAt: messages.sentAt,
-      })
-      .from(messages)
-      .leftJoin(users, eq(messages.senderId, users.id))
-      .where(eq(messages.id, messageId))
-      .limit(1);
+    // Get sender info
+    const sender = await User.findById(session.userId).select('name avatar').lean();
 
-    return NextResponse.json({ message: newMessage[0] });
+    const messageResponse = {
+      id: newMessage._id.toString(),
+      content: newMessage.content,
+      mediaUrl: newMessage.mediaUrl,
+      mediaType: newMessage.mediaType,
+      senderId: newMessage.senderId,
+      senderName: sender?.name || 'Unknown',
+      senderAvatar: sender?.avatar || null,
+      sentAt: Math.floor(new Date(newMessage.sentAt).getTime() / 1000),
+    };
+
+    return NextResponse.json({ message: messageResponse });
   } catch (error) {
     console.error("Send message error:", error);
     return NextResponse.json(

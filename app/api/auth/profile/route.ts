@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { db } from "@/lib/db";
-import { users, userSessions } from "@/lib/schema";
-import { eq, and, gt } from "drizzle-orm";
+import { connectDB } from "@/lib/db";
+import { User, UserSession } from "@/lib/schema";
 
 export async function PUT(request: Request) {
   try {
+    await connectDB();
+    
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get("session_token")?.value;
 
@@ -17,11 +18,9 @@ export async function PUT(request: Request) {
     }
 
     // Verify session
-    const session = await db.query.userSessions.findFirst({
-      where: and(
-        eq(userSessions.token, sessionToken),
-        gt(userSessions.expiresAt, Math.floor(Date.now() / 1000))
-      ),
+    const session = await UserSession.findOne({
+      token: sessionToken,
+      expiresAt: { $gt: Math.floor(Date.now() / 1000) }
     });
 
     if (!session) {
@@ -38,27 +37,31 @@ export async function PUT(request: Request) {
     }
 
     // Update user profile
-    await db
-      .update(users)
-      .set({
+    const updatedUser = await User.findByIdAndUpdate(
+      session.userId,
+      {
         name: name.trim(),
         avatar: avatar || null,
-      })
-      .where(eq(users.id, session.userId));
-
-    // Get updated user data
-    const updatedUser = await db.query.users.findFirst({
-      where: eq(users.id, session.userId),
-      columns: {
-        id: true,
-        name: true,
-        email: true,
-        avatar: true,
-        createdAt: true,
       },
-    });
+      { new: true }
+    ).select('-password');
 
-    return NextResponse.json({ user: updatedUser });
+    if (!updatedUser) {
+      return NextResponse.json(
+        { message: "User not found" },
+        { status: 404 }
+      );
+    }
+
+    const userData = {
+      id: updatedUser._id.toString(),
+      name: updatedUser.name,
+      email: updatedUser.email,
+      avatar: updatedUser.avatar,
+      createdAt: Math.floor(new Date(updatedUser.createdAt).getTime() / 1000),
+    };
+
+    return NextResponse.json({ user: userData });
   } catch (error) {
     console.error("Update profile error:", error);
     return NextResponse.json(

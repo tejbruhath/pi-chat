@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { db } from '@/lib/db';
-import { users, userSessions, conversations, participants, messages } from '@/lib/schema';
-import { eq, and, gt, or, desc } from 'drizzle-orm';
+import { connectDB } from '@/lib/db';
+import { User, UserSession, Conversation, Participant, Message } from '@/lib/schema';
 import { v4 as uuidv4 } from 'uuid';
 
 // Get all conversations for the current user
 export async function GET() {
   try {
+    await connectDB();
+    
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get('session_token')?.value;
 
@@ -19,11 +20,9 @@ export async function GET() {
     }
 
     // Verify session
-    const session = await db.query.userSessions.findFirst({
-      where: and(
-        eq(userSessions.token, sessionToken),
-        gt(userSessions.expiresAt, Math.floor(Date.now() / 1000))
-      ),
+    const session = await UserSession.findOne({
+      token: sessionToken,
+      expiresAt: { $gt: Math.floor(Date.now() / 1000) }
     });
 
     if (!session) {
@@ -34,11 +33,7 @@ export async function GET() {
     }
 
     // Get all conversations where user is a participant
-    const userParticipations = await db
-      .select()
-      .from(participants)
-      .where(eq(participants.userId, session.userId));
-
+    const userParticipations = await Participant.find({ userId: session.userId }).lean();
     const conversationIds = userParticipations.map(p => p.conversationId);
 
     if (conversationIds.length === 0) {
@@ -48,55 +43,58 @@ export async function GET() {
     // Get conversation details with last message
     const conversationList = await Promise.all(
       conversationIds.map(async (convId) => {
-        const conversation = await db.query.conversations.findFirst({
-          where: eq(conversations.id, convId),
-        });
+        const conversation = await Conversation.findById(convId).lean();
 
         if (!conversation) return null;
 
-        // Get all participants
-        const convParticipants = await db
-          .select({
-            id: participants.id,
-            userId: participants.userId,
-            userName: users.name,
-            userAvatar: users.avatar,
+        // Get all participants with user info
+        const convParticipants = await Participant.find({ conversationId: convId }).lean();
+        const participantDetails = await Promise.all(
+          convParticipants.map(async (p) => {
+            const user = await User.findById(p.userId).select('name avatar').lean();
+            return {
+              id: p._id.toString(),
+              userId: p.userId,
+              userName: user?.name || 'Unknown',
+              userAvatar: user?.avatar || null,
+            };
           })
-          .from(participants)
-          .leftJoin(users, eq(participants.userId, users.id))
-          .where(eq(participants.conversationId, convId));
+        );
 
         // Get last message
-        const lastMessage = await db
-          .select({
-            id: messages.id,
-            content: messages.content,
-            sentAt: messages.sentAt,
-            senderName: users.name,
-            senderId: messages.senderId,
-          })
-          .from(messages)
-          .leftJoin(users, eq(messages.senderId, users.id))
-          .where(eq(messages.conversationId, convId))
-          .orderBy(desc(messages.sentAt))
-          .limit(1);
+        const lastMessageDoc = await Message.findOne({ conversationId: convId })
+          .sort({ sentAt: -1 })
+          .limit(1)
+          .lean();
+
+        let lastMessage = null;
+        if (lastMessageDoc) {
+          const sender = await User.findById(lastMessageDoc.senderId).select('name').lean();
+          lastMessage = {
+            id: lastMessageDoc._id.toString(),
+            content: lastMessageDoc.content,
+            sentAt: Math.floor(new Date(lastMessageDoc.sentAt).getTime() / 1000),
+            senderName: sender?.name || 'Unknown',
+            senderId: lastMessageDoc.senderId,
+          };
+        }
 
         // For direct messages, use other user's name as conversation name
         let displayName = conversation.name;
         if (!conversation.isGroup) {
-          const otherParticipant = convParticipants.find(
+          const otherParticipant = participantDetails.find(
             p => p.userId !== session.userId
           );
           displayName = otherParticipant?.userName || 'Unknown User';
         }
 
         return {
-          id: conversation.id,
+          id: conversation._id.toString(),
           name: displayName,
           isGroup: conversation.isGroup,
-          participants: convParticipants,
-          lastMessage: lastMessage[0] || null,
-          createdAt: conversation.createdAt,
+          participants: participantDetails,
+          lastMessage,
+          createdAt: Math.floor(new Date(conversation.createdAt).getTime() / 1000),
         };
       })
     );
@@ -116,6 +114,8 @@ export async function GET() {
 // Create a new conversation (direct or group)
 export async function POST(request: Request) {
   try {
+    await connectDB();
+    
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get('session_token')?.value;
 
@@ -127,11 +127,9 @@ export async function POST(request: Request) {
     }
 
     // Verify session
-    const session = await db.query.userSessions.findFirst({
-      where: and(
-        eq(userSessions.token, sessionToken),
-        gt(userSessions.expiresAt, Math.floor(Date.now() / 1000))
-      ),
+    const session = await UserSession.findOne({
+      token: sessionToken,
+      expiresAt: { $gt: Math.floor(Date.now() / 1000) }
     });
 
     if (!session) {
@@ -155,67 +153,51 @@ export async function POST(request: Request) {
       const otherUserId = participantIds[0];
       
       // Find existing direct conversation between these two users
-      const existingParticipations = await db
-        .select()
-        .from(participants)
-        .where(
-          or(
-            eq(participants.userId, session.userId),
-            eq(participants.userId, otherUserId)
-          )
-        );
+      const currentUserParticipations = await Participant.find({ userId: session.userId }).lean();
+      const otherUserParticipations = await Participant.find({ userId: otherUserId }).lean();
 
-      const conversationCounts = new Map<string, number>();
-      existingParticipations.forEach(p => {
-        const count = conversationCounts.get(p.conversationId) || 0;
-        conversationCounts.set(p.conversationId, count + 1);
-      });
+      const currentConvIds = new Set(currentUserParticipations.map(p => p.conversationId));
+      const sharedConvIds = otherUserParticipations
+        .filter(p => currentConvIds.has(p.conversationId))
+        .map(p => p.conversationId);
 
-      for (const [convId, count] of conversationCounts.entries()) {
-        if (count === 2) {
-          const conv = await db.query.conversations.findFirst({
-            where: and(
-              eq(conversations.id, convId),
-              eq(conversations.isGroup, false)
-            ),
+      for (const convId of sharedConvIds) {
+        const conv = await Conversation.findOne({
+          _id: convId,
+          isGroup: false
+        }).lean();
+        
+        if (conv) {
+          return NextResponse.json({
+            conversation: { id: conv._id.toString() },
+            existed: true,
           });
-          
-          if (conv) {
-            return NextResponse.json({
-              conversation: { id: conv.id },
-              existed: true,
-            });
-          }
         }
       }
     }
 
     // Create new conversation
-    const conversationId = uuidv4();
-    await db.insert(conversations).values({
-      id: conversationId,
+    const newConversation = await Conversation.create({
       name: isGroup ? name : null,
       isGroup: isGroup || false,
     });
 
     // Add current user as participant
-    await db.insert(participants).values({
-      id: uuidv4(),
+    await Participant.create({
       userId: session.userId,
-      conversationId,
+      conversationId: newConversation._id.toString(),
     });
 
     // Add other participants
     for (const userId of participantIds) {
-      await db.insert(participants).values({
-        id: uuidv4(),
+      await Participant.create({
         userId,
-        conversationId,
+        conversationId: newConversation._id.toString(),
       });
     }
 
     return NextResponse.json({
-      conversation: { id: conversationId },
+      conversation: { id: newConversation._id.toString() },
       existed: false,
     });
   } catch (error) {

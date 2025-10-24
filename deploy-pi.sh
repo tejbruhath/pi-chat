@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Pi-Chat Deployment Script for Ubuntu 24.04
+# Deploys Next.js chat application with MongoDB Atlas, Nginx, and Ngrok
+
 # Exit on error and print commands
 set -e
 set -x
@@ -9,6 +12,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
+
+# Configuration
+REPO_URL="https://github.com/tejbruhath/pi-chat.git"
+APP_DIR="/home/$(whoami)/pi-chat"
+NGROK_AUTH_TOKEN="34VRqCR1RxyNl66HNouWceHmA96_7btc3WYii8zQEgb1ZJt1"
 
 # Logging function
 log() {
@@ -27,6 +35,17 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 log "🚀 Starting Pi-Chat deployment on Ubuntu 24.04"
+log "📦 This will install: Node.js, PM2, Nginx, Ngrok, and deploy the chat app"
+
+# Get the actual non-root user
+ACTUAL_USER=$(logname 2>/dev/null || echo $SUDO_USER)
+if [ -z "$ACTUAL_USER" ]; then
+    ACTUAL_USER="ubuntu"  # Default to ubuntu if we can't determine
+fi
+USER_HOME="/home/$ACTUAL_USER"
+
+log "👤 Deploying for user: $ACTUAL_USER"
+log "📁 Home directory: $USER_HOME"
 
 # Update system
 log "🔄 Updating system packages..."
@@ -120,9 +139,9 @@ fi
 # Configure Ngrok auth token
 log "🔑 Configuring Ngrok auth token..."
 if command -v ngrok &> /dev/null; then
-    ngrok config add-authtoken 34VRqCR1RxyNl66HNouWceHmA96_7btc3WYii8zQEgb1ZJt1 \
+    ngrok config add-authtoken $NGROK_AUTH_TOKEN \
         || error_exit "Failed to add Ngrok auth token"
-    log "✅ Ngrok auth token configured"
+    log "✅ Ngrok auth token configured successfully"
 else
     error_exit "Ngrok not found. Cannot configure auth token."
 fi
@@ -251,83 +270,205 @@ Environment=NODE_ENV=production
 WantedBy=multi-user.target
 EOL
 
-# Create startup script for Ngrok
-log "📝 Creating startup scripts..."
-cat > ~/start-ngrok.sh << 'EOL'
+# Create standalone ngrok starter script
+log "📝 Creating Ngrok management scripts..."
+cat > $USER_HOME/start-ngrok.sh << 'EOL'
 #!/bin/bash
 
 # Start Ngrok tunnel in the background
-nohup ngrok http --log=stdout 80 > /home/$(whoami)/ngrok.log 2>&1 &
+echo "🌐 Starting Ngrok tunnel..."
+nohup ngrok http --log=stdout 80 > ~/ngrok.log 2>&1 &
 
 # Wait for Ngrok to start
 sleep 5
 
 # Get public URL
-public_url=$(grep -o 'https://[^ ]*.ngrok.io' /home/$(whoami)/ngrok.log | tail -n1)
-if [ -n "$public_url" ]; then
-    echo "🌍 Your Pi-Chat is available at: $public_url"
+NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'https://[^"]*ngrok[^"]*' | head -n1 || true)
+
+if [ -z "$NGROK_URL" ]; then
+    NGROK_URL=$(grep -o 'https://[^ ]*ngrok[^ ]*' ~/ngrok.log 2>/dev/null | tail -n1 || echo "")
+fi
+
+if [ -n "$NGROK_URL" ]; then
+    echo "✅ Ngrok tunnel established!"
+    echo "🌍 Your Pi-Chat is available at: $NGROK_URL"
+    echo "📊 Ngrok dashboard: http://localhost:4040"
 else
     echo "⚠️  Failed to get Ngrok URL. Check ~/ngrok.log for details."
 fi
 EOL
 
-chmod +x ~/start-ngrok.sh
+chmod +x $USER_HOME/start-ngrok.sh
+chown $ACTUAL_USER:$ACTUAL_USER $USER_HOME/start-ngrok.sh
 
-# Create setup script
-log "📝 Creating setup script..."
-cat > ~/setup-pi-chat.sh << 'EOL'
+# Create ngrok stop script
+cat > $USER_HOME/stop-ngrok.sh << 'EOL'
+#!/bin/bash
+echo "⏹️  Stopping Ngrok..."
+pkill -f ngrok
+echo "✅ Ngrok stopped"
+EOL
+
+chmod +x $USER_HOME/stop-ngrok.sh
+chown $ACTUAL_USER:$ACTUAL_USER $USER_HOME/stop-ngrok.sh
+
+# Clone and setup application
+log "📝 Cloning and setting up Pi-Chat application..."
+
+# Clone or update repository
+if [ ! -d "$USER_HOME/pi-chat" ]; then
+    log "🚀 Cloning Pi-Chat repository from GitHub..."
+    sudo -u $ACTUAL_USER git clone $REPO_URL $USER_HOME/pi-chat || error_exit "Failed to clone repository"
+else
+    log "📁 Repository already exists, pulling latest changes..."
+    cd $USER_HOME/pi-chat
+    sudo -u $ACTUAL_USER git pull || log "Warning: Failed to update repository"
+fi
+
+cd $USER_HOME/pi-chat
+
+# Install dependencies
+log "📦 Installing npm dependencies..."
+sudo -u $ACTUAL_USER npm install || error_exit "Failed to install dependencies"
+
+# Build the project
+log "🔨 Building Next.js application..."
+sudo -u $ACTUAL_USER npm run build || error_exit "Build failed"
+
+# Create systemd service for the app
+log "⚙️  Creating systemd service..."
+cat > /etc/systemd/system/pi-chat.service << EOF
+[Unit]
+Description=Pi-Chat Next.js Application
+After=network.target
+
+[Service]
+Type=simple
+User=$ACTUAL_USER
+WorkingDirectory=$USER_HOME/pi-chat
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start the service
+systemctl daemon-reload
+systemctl enable pi-chat
+systemctl restart pi-chat || error_exit "Failed to start Pi-Chat service"
+
+log "✅ Pi-Chat application deployed successfully!"
+
+# Create setup script for future updates
+log "📝 Creating update script..."
+cat > $USER_HOME/update-pi-chat.sh << 'EOL'
 #!/bin/bash
 
 set -e
 
-# Logging function
+# Colors
+GREEN='\033[0;32m'
+NC='\033[0m'
+
 log() {
-    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
 }
 
-# Error function
-error_exit() {
-    log "[ERROR] $1" >&2
-    exit 1
-}
+cd ~/pi-chat
 
-# Clone or update repository
-if [ ! -d "pi-chat" ]; then
-    log "🚀 Cloning Pi-Chat repository..."
-    git clone https://github.com/tejbruhath/pi-chat.git || error_exit "Failed to clone repository"
-    cd pi-chat
-else
-    log "🔄 Updating Pi-Chat repository..."
-    cd pi-chat
-    git pull || error_exit "Failed to update repository"
-fi
+log "📥 Pulling latest changes..."
+git pull
 
-# Install dependencies
 log "📦 Installing dependencies..."
-npm ci --production || error_exit "Failed to install dependencies"
+npm install
 
-# Build the project
-log "🔨 Building the project..."
-npm run build || error_exit "Build failed"
+log "🔨 Building application..."
+npm run build
 
-# Set up systemd service
-log "⚙️  Setting up systemd service..."
-sudo systemctl daemon-reload
-sudo systemctl enable pi-chat
-sudo systemctl restart pi-chat || error_exit "Failed to start Pi-Chat service"
+log "🔄 Restarting service..."
+sudo systemctl restart pi-chat
 
-# Start Ngrok
-log "🚀 Starting Ngrok..."
-~/start-ngrok.sh
-
-log "✅ Setup complete!"
+log "✅ Update complete!"
 EOL
 
-chmod +x ~/setup-pi-chat.sh
+chmod +x $USER_HOME/update-pi-chat.sh
+chown $ACTUAL_USER:$ACTUAL_USER $USER_HOME/update-pi-chat.sh
 
-log "🎉 Installation complete!"
-echo -e "\nNext steps:"
-echo "1. Run the setup script: ~/setup-pi-chat.sh"
-echo "2. Your application will be available at the Ngrok URL shown"
-echo "3. Check the status with: sudo systemctl status pi-chat"
-echo "4. View logs with: journalctl -u pi-chat -f"add
+# Start Ngrok tunnel
+log "🌐 Starting Ngrok tunnel..."
+sudo -u $ACTUAL_USER bash -c "nohup ngrok http --log=stdout 80 > $USER_HOME/ngrok.log 2>&1 &"
+
+# Wait for Ngrok to start and get URL
+log "⏳ Waiting for Ngrok to establish tunnel..."
+sleep 5
+
+# Try to get the public URL
+NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'https://[^"]*ngrok[^"]*' | head -n1 || true)
+
+if [ -z "$NGROK_URL" ]; then
+    # Fallback: try to extract from log file
+    NGROK_URL=$(grep -o 'https://[^ ]*ngrok[^ ]*' $USER_HOME/ngrok.log 2>/dev/null | tail -n1 || echo "")
+fi
+
+log "🎉 Deployment Complete!"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ✅ Pi-Chat is now running!"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "🌍 PUBLIC URL:"
+if [ -n "$NGROK_URL" ]; then
+    echo "   $NGROK_URL"
+else
+    echo "   Check ngrok.log: cat $USER_HOME/ngrok.log"
+fi
+echo ""
+echo "🔧 LOCAL ACCESS:"
+echo "   http://localhost:3000"
+echo ""
+echo "📊 SERVICE STATUS:"
+echo "   sudo systemctl status pi-chat"
+echo ""
+echo "📋 VIEW LOGS:"
+echo "   Application: journalctl -u pi-chat -f"
+echo "   Ngrok:       tail -f $USER_HOME/ngrok.log"
+echo ""
+echo "🔄 UPDATE APP:"
+echo "   $USER_HOME/update-pi-chat.sh"
+echo ""
+echo "🌐 NGROK DASHBOARD:"
+echo "   http://localhost:4040"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Save deployment info
+cat > $USER_HOME/pi-chat-info.txt << EOF
+Pi-Chat Deployment Information
+Generated: $(date)
+
+Public URL: $NGROK_URL
+Local URL: http://localhost:3000
+Ngrok Dashboard: http://localhost:4040
+
+GitHub Repository: $REPO_URL
+Installation Directory: $USER_HOME/pi-chat
+
+Service Name: pi-chat
+Service Status: sudo systemctl status pi-chat
+Application Logs: journalctl -u pi-chat -f
+Ngrok Logs: tail -f $USER_HOME/ngrok.log
+
+Update Script: $USER_HOME/update-pi-chat.sh
+
+MongoDB Atlas: Connected (see lib/db.ts for connection string)
+EOF
+
+chown $ACTUAL_USER:$ACTUAL_USER $USER_HOME/pi-chat-info.txt
+
+log "📄 Deployment info saved to: $USER_HOME/pi-chat-info.txt"

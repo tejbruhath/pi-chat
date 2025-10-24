@@ -1,18 +1,17 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { users, userSessions } from '@/lib/schema';
-import { eq } from 'drizzle-orm';
+import { connectDB } from '@/lib/db';
+import { User, UserSession } from '@/lib/schema';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
 
 export async function POST(request: Request) {
   try {
+    await connectDB();
+    
     const { email, password } = await request.json();
 
     // Find user by email
-    const user = await db.query.users.findFirst({
-      where: eq(users.email, email),
-    });
+    const user = await User.findOne({ email });
 
     if (!user) {
       return NextResponse.json(
@@ -35,15 +34,20 @@ export async function POST(request: Request) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7); // 7 days from now
 
-    await db.insert(userSessions).values({
-      id: uuidv4(),
-      userId: user.id,
+    await UserSession.create({
+      userId: user._id.toString(),
       token: sessionToken,
       expiresAt: Math.floor(expiresAt.getTime() / 1000),
     });
 
-    // Return user data (excluding password) and session token
-    const { password: _, ...userData } = user;
+    // Return user data (excluding password)
+    const userData = {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      createdAt: Math.floor(new Date(user.createdAt).getTime() / 1000),
+    };
     
     const response = NextResponse.json({
       user: userData,

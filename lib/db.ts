@@ -1,51 +1,43 @@
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import * as schema from './schema';
+import mongoose from 'mongoose';
 
-const sqlite = new Database('chat.db');
-const db = drizzle(sqlite, { schema });
+const MONGODB_URI = 'mongodb+srv://tejdupes_db_user:KvTixU3C7KAvyc92@pi-chat.qeg5ums.mongodb.net/?appName=pi-chat';
 
-// Initialize database tables
-sqlite.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    password TEXT NOT NULL,
-    avatar TEXT,
-    created_at INTEGER NOT NULL DEFAULT (unixepoch())
-  );
+// Connection state
+let isConnected = false;
 
-  CREATE TABLE IF NOT EXISTS conversations (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    is_group INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL DEFAULT (unixepoch())
-  );
+export const connectDB = async () => {
+  if (isConnected) {
+    return;
+  }
 
-  CREATE TABLE IF NOT EXISTS participants (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id),
-    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    joined_at INTEGER NOT NULL DEFAULT (unixepoch())
-  );
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      dbName: 'pi-chat',
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    
+    isConnected = true;
+    console.log('✅ MongoDB connected successfully');
+  } catch (error) {
+    console.error('❌ MongoDB connection error:', error);
+    throw error;
+  }
+};
 
-  CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    content TEXT NOT NULL,
-    media_url TEXT,
-    media_type TEXT,
-    sender_id TEXT NOT NULL REFERENCES users(id),
-    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    sent_at INTEGER NOT NULL DEFAULT (unixepoch())
-  );
+// Handle connection events
+mongoose.connection.on('connected', () => {
+  console.log('Mongoose connected to MongoDB');
+});
 
-  CREATE TABLE IF NOT EXISTS user_sessions (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at INTEGER NOT NULL,
-    token TEXT NOT NULL UNIQUE
-  );
-`);
+mongoose.connection.on('error', (err) => {
+  console.error('Mongoose connection error:', err);
+});
 
-export { db, sqlite };
+mongoose.connection.on('disconnected', () => {
+  console.log('Mongoose disconnected');
+  isConnected = false;
+});
+
+export default mongoose;
