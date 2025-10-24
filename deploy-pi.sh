@@ -157,42 +157,56 @@ CURRENT_USER=$(whoami)
 pm2 startup -u $ACTUAL_USER --hp $USER_HOME | tail -n 1 | bash || warn "Failed to set up PM2 startup (non-critical)"
 pm2 save || warn "Failed to save PM2 process list (non-critical)"
 
-# Install Ngrok (official apt repository method)
-log "🔌 Installing Ngrok via official repository..."
+# Install Ngrok (snap method for Raspberry Pi, apt fallback for others)
+log "🔌 Installing Ngrok..."
 if ! command -v ngrok &> /dev/null; then
-    log "Adding Ngrok apt repository..."
-    
-    # Add Ngrok GPG key
-    curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
-        | tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
-        || warn "Failed to add Ngrok GPG key"
-    
-    # Determine Debian codename
-    if [ -f /etc/os-release ]; then
-        DEBIAN_CODENAME=$(grep VERSION_CODENAME /etc/os-release | cut -d= -f2)
-        if [ -z "$DEBIAN_CODENAME" ]; then
-            DEBIAN_CODENAME="bookworm"  # Default for Debian 12/13
+    # Try snap first (recommended for Raspberry Pi)
+    if command -v snap &> /dev/null; then
+        log "Installing Ngrok via snap (Raspberry Pi method)..."
+        snap install ngrok || warn "Snap installation failed, trying apt method..."
+        
+        if command -v ngrok &> /dev/null; then
+            NGROK_VER=$(ngrok version | head -n1 || echo "unknown")
+            log "✅ Ngrok installed via snap: $NGROK_VER"
         fi
-    else
-        DEBIAN_CODENAME="bookworm"
     fi
     
-    log "Using Debian codename: $DEBIAN_CODENAME"
-    
-    # Add Ngrok repository
-    echo "deb https://ngrok-agent.s3.amazonaws.com $DEBIAN_CODENAME main" \
-        | tee /etc/apt/sources.list.d/ngrok.list
-    
-    # Update and install
-    apt-get update || error_exit "Failed to update package lists after adding Ngrok repo"
-    apt-get install -y ngrok || error_exit "Failed to install Ngrok"
-    
-    # Verify installation
-    if ngrok version &> /dev/null; then
-        NGROK_VER=$(ngrok version | head -n1 || echo "unknown")
-        log "✅ Ngrok installed successfully: $NGROK_VER"
-    else
-        error_exit "Failed to verify Ngrok installation"
+    # If snap failed or not available, try apt
+    if ! command -v ngrok &> /dev/null; then
+        log "Installing Ngrok via apt repository..."
+        
+        # Add Ngrok GPG key
+        curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+            | tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
+            || warn "Failed to add Ngrok GPG key"
+        
+        # Determine Debian codename
+        if [ -f /etc/os-release ]; then
+            DEBIAN_CODENAME=$(grep VERSION_CODENAME /etc/os-release | cut -d= -f2)
+            if [ -z "$DEBIAN_CODENAME" ]; then
+                DEBIAN_CODENAME="bookworm"  # Default for Debian 12/13
+            fi
+        else
+            DEBIAN_CODENAME="bookworm"
+        fi
+        
+        log "Using Debian codename: $DEBIAN_CODENAME"
+        
+        # Add Ngrok repository
+        echo "deb https://ngrok-agent.s3.amazonaws.com $DEBIAN_CODENAME main" \
+            | tee /etc/apt/sources.list.d/ngrok.list
+        
+        # Update and install
+        apt-get update || error_exit "Failed to update package lists after adding Ngrok repo"
+        apt-get install -y ngrok || error_exit "Failed to install Ngrok"
+        
+        # Verify installation
+        if ngrok version &> /dev/null; then
+            NGROK_VER=$(ngrok version | head -n1 || echo "unknown")
+            log "✅ Ngrok installed via apt: $NGROK_VER"
+        else
+            error_exit "Failed to verify Ngrok installation"
+        fi
     fi
 else
     log "ℹ️  Ngrok is already installed: $(ngrok version | head -n1 || echo 'unknown version')"
@@ -232,84 +246,113 @@ if command -v ufw &> /dev/null; then
     ufw status || log "⚠️  Failed to check UFW status"
 fi
 
-# Configure Nginx as reverse proxy for Next.js
-log "🔧 Configuring Nginx as reverse proxy..."
+# Configure Nginx as reverse proxy for Next.js with WebSocket support
+log "🔧 Configuring Nginx as reverse proxy with WebSocket support..."
 cat > /etc/nginx/sites-available/pi-chat << 'EOL'
-server {
-    listen 80;
-    server_name _;
+# Pi-Chat Nginx Configuration
+# Reverse proxy for Next.js app with Socket.IO WebSocket support
 
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-        proxy_read_timeout 300s;
-        proxy_connect_timeout 75s;
-    }
+# WebSocket connection upgrade map
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
 }
-EOL
 
-# Enable the site
-ln -sf /etc/nginx/sites-available/pi-chat /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default  # Remove default config
-
-# Test and restart Nginx
-nginx -t || error_exit "Nginx configuration test failed"
-systemctl restart nginx || error_exit "Failed to restart Nginx"
-log "✅ Nginx configured as reverse proxy for port 3000"
-
-# Verify Nginx installation
-if ! command -v nginx &> /dev/null; then
-    error_exit "Nginx installation verification failed"
-fi
-NGINX_VERSION=$(nginx -v 2>&1 | awk -F'/' '{print $2}')
-log "✅ Nginx version: $NGINX_VERSION"
-
-# Configure Nginx
-log "🌐 Configuring Nginx..."
-cat > /etc/nginx/sites-available/pi-chat << 'EOL'
 server {
-    listen 80;
+    listen 80 default_server;
+    listen [::]:80 default_server;
     server_name _;
 
     # Security headers
-    add_header X-Frame-Options "SAMEORIGIN";
-    add_header X-Content-Type-Options "nosniff";
-    add_header X-XSS-Protection "1; mode=block";
-    add_header Referrer-Policy "strict-origin-when-cross-origin";
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
-    # WebSocket support
+    # Max upload size (for file uploads in chat)
+    client_max_body_size 10M;
+
+    # Socket.IO WebSocket endpoint (must be first for specific matching)
     location /socket.io/ {
         proxy_pass http://localhost:3000/socket.io/;
         proxy_http_version 1.1;
+        
+        # WebSocket headers
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-        proxy_read_timeout 86400;
-    }
-
-    # Main application
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
+        
+        # Standard proxy headers
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # WebSocket timeouts (24 hours for persistent connections)
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        
+        # Disable buffering for WebSocket
+        proxy_buffering off;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # Main application and API routes
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        
+        # Support WebSocket upgrades on all routes
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        
+        # Standard proxy headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Timeouts
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
+        
+        # Caching
         proxy_cache_bypass $http_upgrade;
     }
 }
 EOL
 
 # Enable the site
-ln -sf /etc/nginx/sites-available/pi-chat /etc/nginx/sites-enabled/
-nginx -t || error_exit "Nginx configuration test failed"
-systemctl restart nginx || error_exit "Failed to restart Nginx"
+log "Enabling Pi-Chat site in Nginx..."
+ln -sf /etc/nginx/sites-available/pi-chat /etc/nginx/sites-enabled/pi-chat
+
+# Remove default site
+if [ -L /etc/nginx/sites-enabled/default ]; then
+    log "Removing default Nginx site..."
+    rm -f /etc/nginx/sites-enabled/default
+fi
+
+# Test Nginx configuration
+log "Testing Nginx configuration..."
+nginx -t || error_exit "Nginx configuration test failed - check syntax"
+
+# Reload or restart Nginx
+if systemctl is-active --quiet nginx; then
+    log "Reloading Nginx..."
+    systemctl reload nginx || systemctl restart nginx || error_exit "Failed to reload Nginx"
+else
+    log "Starting Nginx..."
+    systemctl start nginx || error_exit "Failed to start Nginx"
+fi
+
+# Enable Nginx on boot
+systemctl enable nginx || warn "Failed to enable Nginx on boot (non-critical)"
+
+# Verify Nginx is running
+if systemctl is-active --quiet nginx; then
+    log "✅ Nginx configured and running successfully"
+else
+    error_exit "Nginx is not running after configuration"
+fi
 
 # Create systemd service for the application
 log "⚙️  Creating systemd service..."
@@ -611,21 +654,115 @@ cat > $USER_HOME/pi-chat-info.txt << EOF
 Pi-Chat Deployment Information
 Generated: $(date)
 
+═══════════════════════════════════════
+📡 ACCESS URLS
+═══════════════════════════════════════
 Public URL: $NGROK_URL
 Local URL: http://localhost:3000
+Local (Nginx): http://localhost:80
 Ngrok Dashboard: http://localhost:4040
 
+═══════════════════════════════════════
+📁 INSTALLATION
+═══════════════════════════════════════
 GitHub Repository: $REPO_URL
 Installation Directory: $USER_HOME/pi-chat
+User: $ACTUAL_USER
+System: $(uname -a)
 
-Service Name: pi-chat
-Service Status: sudo systemctl status pi-chat
-Application Logs: journalctl -u pi-chat -f
-Ngrok Logs: tail -f $USER_HOME/ngrok.log
+═══════════════════════════════════════
+🔧 SERVICE MANAGEMENT
+═══════════════════════════════════════
+Application Service: pi-chat
 
-Update Script: $USER_HOME/update-pi-chat.sh
+Status:
+  sudo systemctl status pi-chat
+  sudo systemctl status nginx
 
-MongoDB Atlas: Connected (see lib/db.ts for connection string)
+Restart:
+  sudo systemctl restart pi-chat
+  sudo systemctl restart nginx
+
+Logs:
+  journalctl -u pi-chat -f
+  sudo tail -f /var/log/nginx/error.log
+  tail -f $USER_HOME/ngrok.log
+
+═══════════════════════════════════════
+🌐 NGINX COMMANDS
+═══════════════════════════════════════
+Status:
+  sudo systemctl status nginx
+
+Restart:
+  sudo systemctl restart nginx
+  sudo systemctl reload nginx    # No downtime
+
+Test Config:
+  sudo nginx -t
+
+View Logs:
+  sudo tail -f /var/log/nginx/access.log
+  sudo tail -f /var/log/nginx/error.log
+
+Edit Config:
+  sudo nano /etc/nginx/sites-available/pi-chat
+
+═══════════════════════════════════════
+🚀 NGROK COMMANDS
+═══════════════════════════════════════
+Start: $USER_HOME/start-ngrok.sh
+Stop:  $USER_HOME/stop-ngrok.sh
+Logs:  tail -f $USER_HOME/ngrok.log
+Config: ngrok config check
+
+═══════════════════════════════════════
+🔄 MAINTENANCE
+═══════════════════════════════════════
+Update App: $USER_HOME/update-pi-chat.sh
+
+Full Restart:
+  sudo systemctl restart pi-chat
+  sudo systemctl reload nginx
+  $USER_HOME/stop-ngrok.sh
+  $USER_HOME/start-ngrok.sh
+
+═══════════════════════════════════════
+🗄️ DATABASE
+═══════════════════════════════════════
+MongoDB Atlas: Connected
+Database: pi-chat
+Connection: See lib/db.ts for connection string
+No local database setup required
+
+═══════════════════════════════════════
+📚 DOCUMENTATION
+═══════════════════════════════════════
+README: $USER_HOME/pi-chat/README.md
+Nginx Guide: $USER_HOME/pi-chat/NGINX_RASPBERRY_PI_GUIDE.md
+Ngrok Guide: $USER_HOME/pi-chat/NGROK_TROUBLESHOOTING.md
+Mobile UI: $USER_HOME/pi-chat/MOBILE_IMPROVEMENTS.md
+
+═══════════════════════════════════════
+🔍 TROUBLESHOOTING
+═══════════════════════════════════════
+Check all services:
+  sudo systemctl status pi-chat nginx
+  ps aux | grep ngrok
+
+Test connections:
+  curl -I http://localhost:3000  # App
+  curl -I http://localhost:80    # Nginx
+  curl http://localhost:4040/api/tunnels  # Ngrok
+
+View all logs:
+  journalctl -u pi-chat -n 50
+  sudo tail -n 50 /var/log/nginx/error.log
+  tail -n 50 $USER_HOME/ngrok.log
+
+═══════════════════════════════════════
+For more help, visit:
+https://github.com/tejbruhath/pi-chat
 EOF
 
 chown $ACTUAL_USER:$ACTUAL_USER $USER_HOME/pi-chat-info.txt

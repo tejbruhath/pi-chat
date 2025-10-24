@@ -55,12 +55,13 @@ export async function POST(request: Request) {
     });
 
     // Set HTTP-only cookie
+    // Using sameSite: 'lax' for better compatibility with reverse proxies and Ngrok
     response.cookies.set({
       name: 'session_token',
       value: sessionToken,
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: 'lax', // Changed from 'strict' for reverse proxy compatibility
       path: '/',
       expires: expiresAt,
     });
